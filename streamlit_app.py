@@ -61,14 +61,13 @@ st.title("📊 Dashboard de Utilização do Plano de Saúde")
 # ---------------------------
 # 3. Carregar secrets
 # ---------------------------
-secrets = toml.load("secrets.toml")
 credentials = {
     "usernames": {
         user: {"name": user.capitalize(), "password": pwd, "role": role}
         for user, pwd, role in zip(
-            secrets["credentials"]["usernames"],
-            secrets["credentials"]["passwords"],
-            secrets["credentials"].get("roles", ["RH","MEDICO"])
+            st.secrets["credentials"]["usernames"],
+            st.secrets["credentials"]["passwords"],
+            st.secrets["credentials"].get("roles", ["RH","MEDICO"])
         )
     }
 }
