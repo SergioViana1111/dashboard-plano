@@ -7,6 +7,9 @@ from unidecode import unidecode
 import streamlit_authenticator as stauth
 import toml
 
+pip show streamlit-authenticator
+
+
 # ---------------------------
 # 1. Funções auxiliares
 # ---------------------------
