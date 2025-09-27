@@ -48,23 +48,25 @@ def load_credentials():
     return credentials
 
 def login_authenticator(credentials):
-    # Cria o objeto Authenticator
     authenticator = stauth.Authenticate(
         credentials,
         cookie_name="dashboard_cookie",
         key="dashboard_key",
         cookie_expiry_days=1
     )
-    # Realiza login
+    
+    # Captura corretamente os 3 valores
     name, authentication_status, username = authenticator.login("Login", location="sidebar")
-
-
+    
     if authentication_status:
         st.session_state["logged_in"] = True
-        st.session_state["username"] = name
+        st.session_state["username"] = username
         st.session_state["role"] = credentials['usernames'][username]['role']
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
+    elif authentication_status is None:
+        st.warning("Por favor, insira usuário e senha")
+
     return authenticator
 
 def require_login_ui():
