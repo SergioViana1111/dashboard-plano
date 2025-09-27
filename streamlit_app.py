@@ -54,20 +54,21 @@ def login_authenticator(credentials):
         key="dashboard_key",
         cookie_expiry_days=1
     )
-    
-    # Captura corretamente os 3 valores
-    name, authentication_status, username = authenticator.login("Login", location="sidebar")
-    
+
+    # Ajuste: capturar apenas 2 valores
+    name, authentication_status = authenticator.login("Login", location="sidebar")
+
     if authentication_status:
         st.session_state["logged_in"] = True
-        st.session_state["username"] = username
-        st.session_state["role"] = credentials['usernames'][username]['role']
+        st.session_state["username"] = name  # 'name' é o username aqui
+        st.session_state["role"] = credentials['usernames'][name]['role']
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
     elif authentication_status is None:
         st.warning("Por favor, insira usuário e senha")
 
     return authenticator
+
 
 def require_login_ui():
     if not st.session_state["logged_in"]:
