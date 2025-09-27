@@ -24,7 +24,7 @@ def login_authenticator(credentials):
         key="dashboard_key",
         cookie_expiry_days=1
     )
-    name, authentication_status = authenticator.login("Login", location="sidebar")
+    name, authentication_status, username = authenticator.login("Login", location="sidebar")
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = name
