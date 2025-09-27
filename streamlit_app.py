@@ -56,7 +56,8 @@ def login_authenticator(credentials):
         cookie_expiry_days=1
     )
     # Realiza login
-    name, authentication_status = authenticator.login("Login", location="sidebar")
+    name, authentication_status = authenticator.login("Login")
+
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = name
