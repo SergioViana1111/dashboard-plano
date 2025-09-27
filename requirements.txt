@@ -1,0 +1,9 @@
+﻿pandas
+numpy
+plotly
+streamlit
+unidecode
+xlsxwriter
+openpyxl
+streamlit-authenticator
+toml
