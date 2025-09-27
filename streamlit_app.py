@@ -6,7 +6,7 @@ from io import BytesIO
 from unidecode import unidecode
 import streamlit_authenticator as stauth
 import toml
-
+import os
 
 # ---------------------------
 # 1. Funções auxiliares
@@ -17,13 +17,45 @@ def init_session():
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
+def load_credentials():
+    """Carrega credenciais do Streamlit Cloud ou do arquivo local secrets.toml"""
+    if hasattr(st, "secrets"):
+        # Streamlit Cloud
+        credentials = {
+            "usernames": {
+                user: {"name": user.capitalize(), "password": pwd, "role": role}
+                for user, pwd, role in zip(
+                    st.secrets["credentials"]["usernames"],
+                    st.secrets["credentials"]["passwords"],
+                    st.secrets["credentials"].get("roles", ["RH", "MEDICO"])
+                )
+            }
+        }
+    else:
+        # Local
+        path = os.path.join(os.getcwd(), "secrets.toml")
+        data = toml.load(path)
+        credentials = {
+            "usernames": {
+                user: {"name": user.capitalize(), "password": pwd, "role": role}
+                for user, pwd, role in zip(
+                    data["credentials"]["usernames"],
+                    data["credentials"]["passwords"],
+                    data["credentials"].get("roles", ["RH", "MEDICO"])
+                )
+            }
+        }
+    return credentials
+
 def login_authenticator(credentials):
+    # Cria o objeto Authenticator
     authenticator = stauth.Authenticate(
         credentials,
         cookie_name="dashboard_cookie",
         key="dashboard_key",
         cookie_expiry_days=1
     )
+    # Realiza login
     name, authentication_status, username = authenticator.login("Login", location="sidebar")
     if authentication_status:
         st.session_state["logged_in"] = True
@@ -62,16 +94,7 @@ st.title("📊 Dashboard de Utilização do Plano de Saúde")
 # ---------------------------
 # 3. Carregar secrets
 # ---------------------------
-credentials = {
-    "usernames": {
-        user: {"name": user.capitalize(), "password": pwd, "role": role}
-        for user, pwd, role in zip(
-            st.secrets["credentials"]["usernames"],
-            st.secrets["credentials"]["passwords"],
-            st.secrets["credentials"].get("roles", ["RH","MEDICO"])
-        )
-    }
-}
+credentials = load_credentials()
 
 # ---------------------------
 # 4. Login
