@@ -15,6 +15,24 @@ def init_session():
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
+def load_credentials():
+    """Carrega credenciais diretamente do Streamlit Cloud (st.secrets)"""
+    raw = st.secrets["credentials"]
+    usernames = raw.get("usernames", [])
+    passwords = raw.get("passwords", [])
+    roles = raw.get("roles", ["RH", "MEDICO"])  # default caso não exista
+
+    credentials = {
+        "usernames": {
+            str(u): {
+                "name": str(u).capitalize(),
+                "password": p,
+                "role": r
+            } for u, p, r in zip(usernames, passwords, roles)
+        }
+    }
+    return credentials
+
 
 def load_credentials_from_secrets():
     """
