@@ -46,7 +46,7 @@ else:
     # ---------------------------
     # Se chegou aqui, já está logado — carrega o dashboard
     role = st.session_state.role
-    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}"
+    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
 
     # ---------------------------
     # 2. Upload do arquivo
