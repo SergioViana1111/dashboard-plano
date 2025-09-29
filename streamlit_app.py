@@ -18,22 +18,33 @@ def login():
     st.sidebar.subheader("🔐 Login")
     username = st.sidebar.text_input("Usuário")
     password = st.sidebar.text_input("Senha", type="password")
-    if st.sidebar.button("Entrar"):
+    
+    # Botão de login
+    login_clicked = st.sidebar.button("Entrar")
+    
+    if login_clicked:
         usernames = st.secrets["credentials"]["usernames"]
         passwords = st.secrets["credentials"]["passwords"]
         roles = st.secrets["credentials"]["roles"]
+        
         if username in usernames:
             idx = usernames.index(username)
             if password == passwords[idx]:
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.role = roles[idx]
-                st.success(f"Bem-vindo(a), {username}!")
-                st.experimental_rerun()  # Força o Streamlit a recarregar o app
+                st.session_state.just_logged_in = True  # Flag temporária
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
+    
+    # Rerun seguro
+    if st.session_state.get("just_logged_in"):
+        st.session_state.just_logged_in = False
+        st.success(f"Bem-vindo(a), {st.session_state.username}!")
+        st.experimental_rerun()
+
 
 
 if not st.session_state.logged_in:
