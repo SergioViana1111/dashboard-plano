@@ -21,11 +21,6 @@ def init_session():
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
-a
-        # se falhar no hasher, simplesmente não altera (não quebrar app)
-        st.warning("Não foi possível gerar hashes das senhas — verifique a instalação do streamlit_authenticator.")
-    return credentials
-
 
 def load_credentials():
     """
