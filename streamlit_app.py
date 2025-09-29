@@ -6,9 +6,8 @@ import plotly.express as px
 from io import BytesIO
 
 # ---------------------------
-# 0. Autenticação
+# 0. Autenticação segura
 # ---------------------------
-
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -19,44 +18,35 @@ def login():
     username = st.sidebar.text_input("Usuário")
     password = st.sidebar.text_input("Senha", type="password")
     
-    # Botão de login
-    login_clicked = st.sidebar.button("Entrar")
-    
-    if login_clicked:
+    if st.sidebar.button("Entrar"):
         usernames = st.secrets["credentials"]["usernames"]
         passwords = st.secrets["credentials"]["passwords"]
         roles = st.secrets["credentials"]["roles"]
-        
+
         if username in usernames:
             idx = usernames.index(username)
             if password == passwords[idx]:
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.role = roles[idx]
-                st.session_state.just_logged_in = True  # Flag temporária
+                st.success(f"Bem-vindo(a), {username}!")
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
-    
-    # Rerun seguro
-    if st.session_state.get("just_logged_in"):
-        st.session_state.just_logged_in = False
-        st.success(f"Bem-vindo(a), {st.session_state.username}!")
-        st.experimental_rerun()
+
 
 
 
 if not st.session_state.logged_in:
     login()
 else:
-    role = st.session_state.role  # Cargo do usuário
-
     # ---------------------------
     # 1. Configuração do Streamlit
     # ---------------------------
-    st.set_page_config(page_title="Dashboard Plano de Saúde", layout="wide")
-    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
+    # Se chegou aqui, já está logado — carrega o dashboard
+    role = st.session_state.role
+    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}"
 
     # ---------------------------
     # 2. Upload do arquivo
