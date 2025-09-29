@@ -55,19 +55,26 @@ def login_authenticator(credentials):
         cookie_expiry_days=1
     )
 
-    # Corrigido: capturar apenas 2 valores
-    name, authentication_status = authenticator.login("Login", location="sidebar")
+    # IMPORTANTE: agora capturamos 3 valores (display_name, auth_status, username_key)
+    name, authentication_status, username = authenticator.login("Login", location="sidebar")
 
     if authentication_status:
         st.session_state["logged_in"] = True
-        st.session_state["username"] = name
-        st.session_state["role"] = credentials['usernames'][name]['role']
+        # username é a chave usada em credentials['usernames'] (ex: 'sergio'), 
+        # name é o nome exibido (ex: 'Sergio')
+        st.session_state["username"] = username or name or ""
+        # proteger caso username seja None ou não exista no dict
+        try:
+            st.session_state["role"] = credentials['usernames'][username].get('role', '')
+        except Exception:
+            st.session_state["role"] = ''
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
     elif authentication_status is None:
         st.warning("Por favor, insira usuário e senha")
 
     return authenticator
+
 
 
 
