@@ -100,9 +100,11 @@ def ensure_hashed_passwords(credentials):
 def login_authenticator(credentials):
     """
     Inicializa Authenticate e força render do form na sidebar.
-    Usa chamada correta: authenticator.login(location="sidebar", key="login")
+    Usa chamada correta: authenticator.login(location="sidebar", key="login", fields=...)
     Normaliza retorno (2 ou 3 valores) e preenche st.session_state.
     """
+    import inspect, traceback
+
     try:
         authenticator = stauth.Authenticate(
             credentials,
@@ -115,7 +117,7 @@ def login_authenticator(credentials):
         st.text(traceback.format_exc())
         return None
 
-    # mostrar assinatura real (apenas debug)
+    # Debug assinatura
     try:
         sig = inspect.signature(authenticator.login)
         st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
@@ -124,12 +126,15 @@ def login_authenticator(credentials):
 
     side_container = st.sidebar.container()
     side_container.write("🔐 Login do Dashboard")
-    # Mostrar apenas as chaves (usuários) — NÃO mostrar senhas
     side_container.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
 
+    # CHAMADA CORRETA: com fields para garantir que textbox apareçam
     try:
-        # chamada clara usando keywords na ordem que sua versão exige
-        result = authenticator.login(location="sidebar", key="login")
+        result = authenticator.login(
+            location="sidebar",
+            key="login",
+            fields={"username": "Usuário", "password": "Senha"}
+        )
     except Exception:
         side_container.error("Erro ao chamar authenticator.login — veja debug abaixo.")
         side_container.text(traceback.format_exc())
@@ -171,6 +176,7 @@ def login_authenticator(credentials):
         side_container.info("Por favor, insira usuário e senha")
 
     return authenticator
+
 
 
 
