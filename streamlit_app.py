@@ -15,47 +15,66 @@ def init_session():
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
-def load_credentials():
-    """Carrega credenciais diretamente do Streamlit Cloud (st.secrets)"""
-    raw = st.secrets["credentials"]
-    usernames = raw.get("usernames", [])
-    passwords = raw.get("passwords", [])
-    roles = raw.get("roles", ["RH", "MEDICO"])  # default caso não exista
 
+def load_credentials_from_secrets():
+    """
+    Carrega credenciais do Streamlit secrets no formato:
+    [credentials]
+    usernames = ["gestor", "medico"]
+    passwords = ["rh123", "med123"]
+    roles = ["RH", "MEDICO"]
+    """
     credentials = {
         "usernames": {
-            str(u): {
-                "name": str(u).capitalize(),
-                "password": p,
-                "role": r
-            } for u, p, r in zip(usernames, passwords, roles)
+            user: {
+                "name": user.capitalize(),
+                "password": pwd,
+                "role": role
+            }
+            for user, pwd, role in zip(
+                st.secrets["credentials"]["usernames"],
+                st.secrets["credentials"]["passwords"],
+                st.secrets["credentials"].get("roles", ["RH","MEDICO"])
+            )
         }
     }
     return credentials
 
 def login_authenticator(credentials):
+    """
+    Cria o objeto authenticator e faz o login.
+    Compatível com versões que retornam 2 ou 3 valores.
+    """
     authenticator = stauth.Authenticate(
         credentials,
         cookie_name="dashboard_cookie",
         key="dashboard_key",
         cookie_expiry_days=1
     )
-    
-    # chamada correta
-    name, authentication_status, username = authenticator.login(
-        location="sidebar",  # sempre como keyword
-        key="Login"          # sempre como keyword
-    )
-    
+
+    # Chamando login de forma segura
+    login_result = authenticator.login(location="sidebar", key="Login")
+
+    # Tratando diferentes retornos
+    if login_result is not None:
+        if len(login_result) == 3:
+            name, authentication_status, username = login_result
+        else:  # len == 2
+            name, authentication_status = login_result
+            username = name
+    else:
+        name = authentication_status = username = None
+
+    # Atualizando session_state
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = name
         st.session_state["role"] = credentials['usernames'][username]['role']
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
-    elif authentication_status is None:
+    else:
         st.warning("Por favor, insira usuário e senha")
-    
+
     return authenticator
 
 
