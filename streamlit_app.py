@@ -1,118 +1,49 @@
-# ==========================
-# Imports
-# ==========================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 from io import BytesIO
 from unidecode import unidecode
+import streamlit_authenticator as stauth
 import toml
-import os
 
-# ==========================
+# ---------------------------
 # 1. Funções auxiliares
-# ==========================
+# ---------------------------
 def init_session():
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
+def login_authenticator(credentials):
+    authenticator = stauth.Authenticate(
+        credentials,
+        cookie_name="dashboard_cookie",
+        key="dashboard_key",
+        cookie_expiry_days=1
+    )
+    name, authentication_status, username = authenticator.login("Login", location="sidebar")
+    if authentication_status:
+        st.session_state["logged_in"] = True
+        st.session_state["username"] = name
+        st.session_state["role"] = credentials['usernames'][username]['role']
+    elif authentication_status is False:
+        st.error("Usuário ou senha inválidos")
+    return authenticator
 
-def load_credentials():
-    """
-    Carrega credenciais de st.secrets (Streamlit Cloud) ou do arquivo local secrets.toml.
-    
-    Formato esperado no TOML:
-    [credentials]
-    usernames = ["gestor", "medico"]
-    passwords = ["rh123", "med123"]
-    roles = ["RH", "MEDICO"]
-    (names = ["Gestor", "Médico"] opcional)
-    
-    Retorna dicionário no formato:
-    {
-        "usernames": {
-            "gestor": {"name":"Gestor","password":"rh123","role":"RH"},
-            "medico": {"name":"Medico","password":"med123","role":"MEDICO"}
-        }
-    }
-    """
-
-    raw = None
-
-    # Tenta carregar do Streamlit Cloud
-    if hasattr(st, "secrets") and getattr(st, "secrets"):
-        raw = st.secrets.get("credentials", None)
-
-    # Se não estiver no Cloud, tenta arquivo local
-    if raw is None:
-        path = os.path.join(os.getcwd(), "secrets.toml")
-        if os.path.exists(path):
-            try:
-                data = toml.load(path)
-                raw = data.get("credentials", None)
-            except Exception as e:
-                st.warning(f"Erro ao ler secrets.toml: {e}")
-                raw = None
-
-    if not raw:
-        return {"usernames": {}}
-
-    # Listas do TOML
-    user_list = raw.get("usernames", []) or []
-    pass_list = raw.get("passwords", []) or []
-    role_list = raw.get("roles", []) or []
-    name_list = raw.get("names", []) or []
-
-    # Monta dicionário de usuários
-    from itertools import zip_longest
-    usernames = {}
-    for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
-        if not u:
-            continue
-        display = n or str(u).capitalize()
-        usernames[str(u)] = {"name": display, "password": p, "role": r}
-
-    return {"usernames": usernames}
-
-
-def login_manual(credentials):
-    """
-    Login manual via sidebar, sem depender do streamlit_authenticator.
-    """
-    side = st.sidebar
-    side.write("🔐 Login do Dashboard")
-    side.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
-
-    username = side.text_input("Usuário", key="login_user")
-    password = side.text_input("Senha", type="password", key="login_pass")
-    login_button = side.button("Login")
-
-    if "logged_in" not in st.session_state:
-        st.session_state["logged_in"] = False
-        st.session_state["username"] = ""
-        st.session_state["role"] = ""
-
-    if login_button:
-        users = credentials.get("usernames", {})
-        if username in users and users[username]["password"] == password:
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = username
-            st.session_state["role"] = users[username].get("role", "")
-            side.success(f"Bem-vindo, {username}!")
-        else:
-            side.error("Usuário ou senha inválidos")
-
+def require_login_ui():
     if not st.session_state["logged_in"]:
-        st.stop()  # impede que o dashboard carregue antes do login
+        st.stop()
 
+def logout(authenticator):
+    if st.session_state["logged_in"]:
+        authenticator.logout("Logout", "sidebar")
+        st.session_state["logged_in"] = False
 
 def clean_cols(df):
     df.columns = [unidecode(col).strip().replace(' ','_').replace('-','_') for col in df.columns]
     return df
-
 
 def mascarar_pii(df):
     df_masked = df.copy()
@@ -120,30 +51,40 @@ def mascarar_pii(df):
         df_masked[col] = df_masked[col].apply(lambda x: unidecode(str(x)[0]) + "***" if pd.notnull(x) else x)
     return df_masked
 
-
-# ==========================
+# ---------------------------
 # 2. Inicializar sessão
-# ==========================
+# ---------------------------
 init_session()
 st.set_page_config(page_title="Dashboard Plano de Saúde", layout="wide")
 st.title("📊 Dashboard de Utilização do Plano de Saúde")
 
-# ==========================
-# 3. Carregar credenciais
-# ==========================
-credentials = load_credentials()
+# ---------------------------
+# 3. Carregar secrets
+# ---------------------------
+credentials = {
+    "usernames": {
+        user: {"name": user.capitalize(), "password": pwd, "role": role}
+        for user, pwd, role in zip(
+            st.secrets["credentials"]["usernames"],
+            st.secrets["credentials"]["passwords"],
+            st.secrets["credentials"].get("roles", ["RH","MEDICO"])
+        )
+    }
+}
 
-# ==========================
-# 4. Login manual
-# ==========================
-login_manual(credentials)
+# ---------------------------
+# 4. Login
+# ---------------------------
+authenticator = login_authenticator(credentials)
+require_login_ui()
 st.sidebar.markdown(f"**Usuário:** {st.session_state['username']}")
 st.sidebar.markdown(f"**Papel:** {st.session_state['role']}")
+logout(authenticator)
 
-# ==========================
+# ---------------------------
 # 5. Upload de arquivo
-# ==========================
-uploaded_file = st.file_uploader("Escolha o arquivo .xltx", type="xltx")
+# ---------------------------
+uploaded_file = st.file_uploader("Escolha o arquivo .xlsx", type="xlsx")
 
 if uploaded_file is not None:
     # Leitura das abas
@@ -260,9 +201,8 @@ if uploaded_file is not None:
         utilizacao_display = utilizacao_filtrada.copy()
         cadastro_display = cadastro_filtrado.copy()
 
-    # ==========================
+    # ---------------------------
     # Tabs
-    # ==========================
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "KPIs Gerais",
         "Comparativo de Planos",
@@ -271,7 +211,8 @@ if uploaded_file is not None:
         "Exportação"
     ])
 
-    # ---------- Tab1 ----------
+    # ---------------------------
+    # Tab1: KPIs Gerais
     with tab1:
         st.subheader("📌 KPIs Gerais")
         custo_total = utilizacao_display['Valor'].sum() if 'Valor' in utilizacao_display.columns else 0
@@ -297,7 +238,8 @@ if uploaded_file is not None:
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- Tab2 ----------
+    # ---------------------------
+    # Tab2: Comparativo de Planos
     with tab2:
         possible_cols = [col for col in utilizacao_display.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
         if possible_cols:
@@ -312,7 +254,8 @@ if uploaded_file is not None:
         else:
             st.info("Coluna de plano não encontrada. Verifique o arquivo ou nomes das colunas.")
 
-    # ---------- Tab3 ----------
+    # ---------------------------
+    # Tab3: Alertas & Inconsistências
     with tab3:
         st.subheader("🚨 Alertas")
         custo_lim = st.number_input("Limite de custo (R$)", value=5000)
@@ -351,7 +294,8 @@ if uploaded_file is not None:
         else:
             st.write("Nenhuma inconsistência encontrada.")
 
-    # ---------- Tab4 ----------
+    # ---------------------------
+    # Tab4: CIDs Crônicos & Procedimentos
     with tab4:
         st.subheader("🏥 Beneficiários Crônicos")
         cids_cronicos = ['E11','I10','J45']
@@ -364,7 +308,8 @@ if uploaded_file is not None:
             top_proc = utilizacao_display.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
             st.dataframe(top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
 
-    # ---------- Tab5 ----------
+    # ---------------------------
+    # Tab5: Exportação
     with tab5:
         st.subheader("📤 Exportar Relatório")
         buffer = BytesIO()
@@ -384,6 +329,5 @@ if uploaded_file is not None:
         st.download_button("📥 Baixar Relatório Completo", buffer, "dashboard_plano_saude.xlsx", "application/vnd.ms-excel")
 
     st.success("✅ Dashboard carregado com sucesso!")
-
 else:
     st.info("Aguardando upload do arquivo .xlsx")
