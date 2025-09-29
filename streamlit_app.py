@@ -13,15 +13,6 @@ if "logged_in" not in st.session_state:
     st.session_state.username = ""
     st.session_state.role = ""
 
-# Chama a função de login
-login()
-
-# Se estiver logado, carrega o dashboard imediatamente
-if st.session_state.logged_in:
-    role = st.session_state.role
-    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
-    # ... resto do código do dashboard ...
-
 
 def login():
     # Inicializa inputs no session_state
