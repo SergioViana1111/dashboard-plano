@@ -23,80 +23,51 @@ def init_session():
         st.session_state["role"] = ""
 
 
-def login_authenticator(credentials):
+def load_credentials():
     """
-    Inicializa Authenticate e força render do form na sidebar (container).
-    Retorna o objeto authenticator (ou None se falhar).
+    Lê credentials de st.secrets (Cloud) ou de secrets.toml local.
+    Suporta formato de listas:
+      [credentials]
+      usernames = ["gestor","medico"]
+      passwords = ["rh123","med123"]
+      roles = ["RH","MEDICO"]
+    Retorna dict no formato esperado pelo streamlit_authenticator:
+    { "usernames": { "gestor": {"name":"Gestor","password":"...","role":"RH"}, ... } }
     """
-    try:
-        authenticator = stauth.Authenticate(
-            credentials,
-            cookie_name="dashboard_cookie",
-            key="dashboard_key",
-            cookie_expiry_days=1
-        )
-    except Exception:
-        st.error("Erro ao inicializar Authenticate — verifique credentials / versão do pacote.")
-        st.text(traceback.format_exc())
-        return None
+    raw = None
+    if hasattr(st, "secrets") and getattr(st, "secrets"):
+        raw = st.secrets.get("credentials", None)
 
-    # Mostrar assinatura real (útil)
-    try:
-        sig = inspect.signature(authenticator.login)
-        st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
-    except Exception:
-        pass
-
-    # garantir que o formulário fique num container da sidebar (mais explícito)
-    side_container = st.sidebar.container()
-    side_container.write("🔐 Login do Dashboard")
-    side_container.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
-
-    # CHAMADA explícita usando keywords (location primeiro, key depois)
-    try:
-        # renderiza o widget no sidebar; key diferente de 'Login' para evitar conflitos de key
-        result = authenticator.login(location="sidebar", key="login")
-    except Exception:
-        side_container.error("Erro ao chamar authenticator.login — veja debug abaixo.")
-        side_container.text(traceback.format_exc())
-        return authenticator
-
-    # Normalizar retorno (pode ser 3 ou 2 itens)
-    name = None
-    authentication_status = None
-    username = None
-    if isinstance(result, (tuple, list)):
-        if len(result) == 3:
-            name, authentication_status, username = result
-        elif len(result) == 2:
-            a, b = result
-            if isinstance(a, (bool, type(None))):
-                authentication_status, username = a, b
-                name = username
-            else:
-                name, authentication_status = a, b
-                username = name
-        else:
+    if raw is None:
+        path = os.path.join(os.getcwd(), "secrets.toml")
+        if os.path.exists(path):
             try:
-                name = result[0]
-                authentication_status = result[1] if len(result) > 1 else None
-                username = result[2] if len(result) > 2 else name
+                data = toml.load(path)
+                raw = data.get("credentials", None)
             except Exception:
-                name, authentication_status, username = None, None, None
-    else:
-        name, authentication_status, username = None, None, None
+                raw = None
 
-    # preencher session_state (mesma lógica sua)
-    if authentication_status:
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = username or name or ""
-        st.session_state["role"] = credentials.get('usernames', {}).get(username, {}).get('role', '')
-    elif authentication_status is False:
-        side_container.error("Usuário ou senha inválidos")
-    elif authentication_status is None:
-        side_container.info("Por favor, insira usuário e senha")
+    if not raw:
+        return {"usernames": {}}
 
-    return authenticator
+    # Se já for dict com 'usernames' como dict, retorna direto
+    if isinstance(raw, dict) and isinstance(raw.get("usernames"), dict):
+        return {"usernames": raw["usernames"]}
+
+    # Caso listas -> converter para dict
+    user_list = raw.get("usernames", []) or []
+    pass_list = raw.get("passwords", []) or []
+    role_list = raw.get("roles", []) or []
+    name_list = raw.get("names", []) or []
+
+    usernames = {}
+    for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
+        if not u:
+            continue
+        display = n or str(u).capitalize()
+        usernames[str(u)] = {"name": display, "password": p or "", "role": r or ""}
+    return {"usernames": usernames}
+
 
 
 def ensure_hashed_passwords(credentials):
@@ -128,9 +99,9 @@ def ensure_hashed_passwords(credentials):
 
 def login_authenticator(credentials):
     """
-    Inicializa Authenticate e faz o login usando a assinatura correta.
-    Chama: authenticator.login(location="sidebar", key="Login")
-    Normaliza o retorno (2 ou 3 valores) e preenche st.session_state.
+    Inicializa Authenticate e força render do form na sidebar.
+    Usa chamada correta: authenticator.login(location="sidebar", key="login")
+    Normaliza retorno (2 ou 3 valores) e preenche st.session_state.
     """
     try:
         authenticator = stauth.Authenticate(
@@ -140,21 +111,31 @@ def login_authenticator(credentials):
             cookie_expiry_days=1
         )
     except Exception:
-        st.error("Erro ao inicializar Authenticate — verifique o formato de credentials e a versão do streamlit_authenticator.")
+        st.error("Erro ao inicializar Authenticate — verifique credentials / versão do pacote.")
         st.text(traceback.format_exc())
         return None
 
-    # CHAMADA CORRETA: use keywords (location e key)
+    # mostrar assinatura real (apenas debug)
     try:
-        result = authenticator.login(location="sidebar", key="Login")
+        sig = inspect.signature(authenticator.login)
+        st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
     except Exception:
-        st.error("Erro ao chamar authenticator.login — veja o stacktrace para debug.")
-        st.text(traceback.format_exc())
-        # debug: mostrar usuários carregados
-        st.sidebar.write("DEBUG: usuários carregados:", list(credentials.get("usernames", {}).keys()))
+        pass
+
+    side_container = st.sidebar.container()
+    side_container.write("🔐 Login do Dashboard")
+    # Mostrar apenas as chaves (usuários) — NÃO mostrar senhas
+    side_container.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
+
+    try:
+        # chamada clara usando keywords na ordem que sua versão exige
+        result = authenticator.login(location="sidebar", key="login")
+    except Exception:
+        side_container.error("Erro ao chamar authenticator.login — veja debug abaixo.")
+        side_container.text(traceback.format_exc())
         return authenticator
 
-    # Normalizar retorno: pode ser tuple de 3 ou 2 elementos
+    # Normalizar retorno (pode ser 3 ou 2 itens)
     name = None
     authentication_status = None
     username = None
@@ -162,7 +143,6 @@ def login_authenticator(credentials):
         if len(result) == 3:
             name, authentication_status, username = result
         elif len(result) == 2:
-            # detectar qual é qual: auth_status costuma ser bool/None
             a, b = result
             if isinstance(a, (bool, type(None))):
                 authentication_status, username = a, b
@@ -171,7 +151,6 @@ def login_authenticator(credentials):
                 name, authentication_status = a, b
                 username = name
         else:
-            # fallback defensivo
             try:
                 name = result[0]
                 authentication_status = result[1] if len(result) > 1 else None
@@ -179,18 +158,17 @@ def login_authenticator(credentials):
             except Exception:
                 name, authentication_status, username = None, None, None
     else:
-        # caso inesperado
         name, authentication_status, username = None, None, None
 
-    # pós-login: preencher session_state
+    # Preencher session_state
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = username or name or ""
         st.session_state["role"] = credentials.get('usernames', {}).get(username, {}).get('role', '')
     elif authentication_status is False:
-        st.error("Usuário ou senha inválidos")
+        side_container.error("Usuário ou senha inválidos")
     elif authentication_status is None:
-        st.warning("Por favor, insira usuário e senha")
+        side_container.info("Por favor, insira usuário e senha")
 
     return authenticator
 
