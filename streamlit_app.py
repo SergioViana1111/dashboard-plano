@@ -8,6 +8,8 @@ import streamlit_authenticator as stauth
 import toml
 import os
 from itertools import zip_longest
+import traceback
+import streamlit_authenticator as stauth
 
 
 # ---------------------------
@@ -19,20 +21,25 @@ def init_session():
         st.session_state["username"] = ""
         st.session_state["role"] = ""
 
+a
+        # se falhar no hasher, simplesmente não altera (não quebrar app)
+        st.warning("Não foi possível gerar hashes das senhas — verifique a instalação do streamlit_authenticator.")
+    return credentials
+
+
 def load_credentials():
     """
-    Suporta o formato:
+    Lê secrets (st.secrets ou secrets.toml) no formato de listas:
     [credentials]
     usernames = ["gestor","medico"]
     passwords = ["rh123","med123"]
     roles = ["RH","MEDICO"]
+    Retorna dict no formato que streamlit_authenticator espera.
     """
-    # tenta pegar de st.secrets primeiro (Streamlit Cloud)
     raw = None
     if hasattr(st, "secrets") and getattr(st, "secrets"):
         raw = st.secrets.get("credentials", None)
 
-    # se não tiver, tenta arquivo local secrets.toml
     if raw is None:
         path = os.path.join(os.getcwd(), "secrets.toml")
         if os.path.exists(path):
@@ -42,18 +49,16 @@ def load_credentials():
     if not raw:
         return {"usernames": {}}
 
-    # Se raw já for dict com "usernames" como dict, só normaliza
+    # Se já for dict com 'usernames' como dict, retorna direto
     if isinstance(raw, dict) and isinstance(raw.get("usernames"), dict):
         return {"usernames": raw["usernames"]}
 
-    # Caso seja o formato de listas (como você mostrou), converte para dict
     user_list = raw.get("usernames", []) or []
     pass_list = raw.get("passwords", []) or []
     role_list = raw.get("roles", []) or []
-    name_list = raw.get("names", []) or []  # opcional
+    name_list = raw.get("names", []) or []
 
     usernames = {}
-    # zip_longest para evitar perder itens se listas tiverem comprimentos diferentes
     for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
         if not u:
             continue
@@ -64,49 +69,55 @@ def load_credentials():
 
 def ensure_hashed_passwords(credentials):
     """
-    Gera hashes para senhas em texto (heurística: se comprimento < 20, considera texto).
-    Substitui as senhas no dict por hashes no mesmo mapeamento.
+    Tenta gerar hashes para senhas em texto usando stauth.Hasher.
+    Se houver falha (ex: versão/instalação diferente), mantém senhas em texto e avisa.
     """
     users = list(credentials.get("usernames", {}).keys())
     pwds = [credentials["usernames"][u].get("password", "") for u in users]
 
-    # decidir se precisamos gerar hashes: se qualquer senha parecer 'plana' (curta)
+    # heurística: se nenhuma senha curta (texto), assume que já são hashes
     need_hash = any((pwd and len(pwd) < 20) for pwd in pwds)
     if not need_hash:
         return credentials
 
     try:
+        # stauth.Hasher aceita lista de senhas em texto
         hasher = stauth.Hasher(pwds)
         hashed = hasher.generate()
-        # aplicar hashes de volta mantendo ordem users
         for u, h in zip(users, hashed):
             credentials["usernames"][u]["password"] = h
-    except Exception:
-        # se falhar no hasher, simplesmente não altera (não quebrar app)
-        st.warning("Não foi possível gerar hashes das senhas — verifique a instalação do streamlit_authenticator.")
+    except Exception as e:
+        # não quebra: apenas avisa e mantém senhas em texto
+        st.warning("Não foi possível gerar hashes das senhas — mantendo senhas em texto. Verifique a instalação/versão do streamlit_authenticator.")
+        # opcional: mostrar erro técnico (útil localmente)
+        st.sidebar.write("DEBUG: erro ao gerar hashes:", str(e))
     return credentials
 
 
 def login_authenticator(credentials):
-    # normaliza + gera hashes se necessário
     creds = ensure_hashed_passwords(credentials)
 
-    authenticator = stauth.Authenticate(
-        creds,
-        cookie_name="dashboard_cookie",
-        key="dashboard_key",
-        cookie_expiry_days=1
-    )
+    try:
+        authenticator = stauth.Authenticate(
+            creds,
+            cookie_name="dashboard_cookie",
+            key="dashboard_key",
+            cookie_expiry_days=1
+        )
+    except Exception as e:
+        st.error("Erro ao inicializar Authenticate — verifique o formato de credentials e a versão do streamlit_authenticator.")
+        st.text(traceback.format_exc())
+        # retornar um objeto vazio/None pode quebrar o app; retornamos None e o chamador deve tratar
+        return None
 
-    # chamada protegida para capturar tracebacks úteis
+    # chamada protegida para capturar erros durante o .login()
     try:
         name, authentication_status, username = authenticator.login("Login", location="sidebar")
-    except Exception:
+    except Exception as e:
         st.error("Erro ao chamar authenticator.login — veja o stacktrace para debug.")
         st.text(traceback.format_exc())
-        # mostrar apenas as chaves (sem senhas) para checagem rápida
+        # mostre quais usuários foram carregados (nome apenas)
         st.sidebar.write("DEBUG: usuários carregados:", list(creds.get("usernames", {}).keys()))
-        # retornar o objeto authenticator mesmo assim (ou você pode raise se preferir)
         return authenticator
 
     # comportamento normal pós-login
@@ -120,8 +131,6 @@ def login_authenticator(credentials):
         st.warning("Por favor, insira usuário e senha")
 
     return authenticator
-
-
 
 
 def require_login_ui():
