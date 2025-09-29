@@ -13,27 +13,48 @@ if "logged_in" not in st.session_state:
     st.session_state.username = ""
     st.session_state.role = ""
 
+# Chama a função de login
+login()
+
+# Se estiver logado, carrega o dashboard imediatamente
+if st.session_state.logged_in:
+    role = st.session_state.role
+    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
+    # ... resto do código do dashboard ...
+
+
 def login():
+    # Inicializa inputs no session_state
+    if "username_input" not in st.session_state:
+        st.session_state.username_input = ""
+    if "password_input" not in st.session_state:
+        st.session_state.password_input = ""
+    
     st.sidebar.subheader("🔐 Login")
-    username = st.sidebar.text_input("Usuário")
-    password = st.sidebar.text_input("Senha", type="password")
+    st.session_state.username_input = st.sidebar.text_input(
+        "Usuário", st.session_state.username_input
+    )
+    st.session_state.password_input = st.sidebar.text_input(
+        "Senha", st.session_state.password_input, type="password"
+    )
     
     if st.sidebar.button("Entrar"):
         usernames = st.secrets["credentials"]["usernames"]
         passwords = st.secrets["credentials"]["passwords"]
         roles = st.secrets["credentials"]["roles"]
-
-        if username in usernames:
-            idx = usernames.index(username)
-            if password == passwords[idx]:
+        
+        if st.session_state.username_input in usernames:
+            idx = usernames.index(st.session_state.username_input)
+            if st.session_state.password_input == passwords[idx]:
                 st.session_state.logged_in = True
-                st.session_state.username = username
+                st.session_state.username = st.session_state.username_input
                 st.session_state.role = roles[idx]
-                st.success(f"Bem-vindo(a), {username}!")
+                st.success(f"Bem-vindo(a), {st.session_state.username}!")
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
+
 
 
 
