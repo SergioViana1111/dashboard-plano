@@ -92,17 +92,13 @@ def ensure_hashed_passwords(credentials):
 
 def login_authenticator(credentials):
     """
-    Versão resiliente de login_authenticator:
-    - inicializa Authenticate
-    - exibe assinatura de .login() no sidebar para debugging
-    - tenta várias formas de chamar .login() e aceita retornos com 2 ou 3 valores
+    Inicializa Authenticate e faz o login usando a assinatura correta.
+    Chama: authenticator.login(location="sidebar", key="Login")
+    Normaliza o retorno (2 ou 3 valores) e preenche st.session_state.
     """
-    # NÃO tenta gerar hashes aqui (evita incompatibilidade com versões).
-    creds = credentials
-
     try:
         authenticator = stauth.Authenticate(
-            creds,
+            credentials,
             cookie_name="dashboard_cookie",
             key="dashboard_key",
             cookie_expiry_days=1
@@ -112,88 +108,56 @@ def login_authenticator(credentials):
         st.text(traceback.format_exc())
         return None
 
-    # mostrar assinatura real da função .login para ajudar debug
+    # CHAMADA CORRETA: use keywords (location e key)
     try:
-        sig = inspect.signature(authenticator.login)
-        st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
+        result = authenticator.login(location="sidebar", key="Login")
     except Exception:
-        # se não for possível inspecionar, não quebra
-        pass
-
-    # Tentar várias chamadas possíveis — parar na primeira que não der TypeError
-    login_attempts = [
-        lambda: authenticator.login("Login", location="sidebar"),
-        lambda: authenticator.login("Login", "sidebar"),
-        lambda: authenticator.login(location="sidebar"),
-        lambda: authenticator.login("Login"),
-        lambda: authenticator.login()
-    ]
-
-    result = None
-    last_exc = None
-    for fn in login_attempts:
-        try:
-            result = fn()
-            # se não lançar TypeError, quebrar o loop
-            break
-        except TypeError as e:
-            last_exc = e
-            # tentar próxima forma
-        except Exception as e:
-            # capturar outros erros e mostrar para debug, mas tentar próximas formas
-            last_exc = e
-
-    if result is None:
-        st.error("Não foi possível chamar authenticator.login() com as tentativas automáticas.")
-        if last_exc is not None:
-            st.sidebar.write("DEBUG: último erro ao tentar login:", str(last_exc))
-            st.text(traceback.format_exc())
-        # opcional: parar execução
+        st.error("Erro ao chamar authenticator.login — veja o stacktrace para debug.")
+        st.text(traceback.format_exc())
+        # debug: mostrar usuários carregados
+        st.sidebar.write("DEBUG: usuários carregados:", list(credentials.get("usernames", {}).keys()))
         return authenticator
 
-    # result pode ser:
-    # - tuple de 3 itens: (name_display, auth_status, username_key)
-    # - tuple de 2 itens: (auth_status, username)  (algumas versões retornam só 2)
-    # - outras variações; vamos normalizar:
-    try:
-        if isinstance(result, tuple) or isinstance(result, list):
-            if len(result) == 3:
-                name, authentication_status, username = result
-            elif len(result) == 2:
-                # possível (authentication_status, username) ou (name, authentication_status)
-                # vamos tentar detectar tipo pelo valor (auth_status é bool/None usually)
-                a, b = result
-                if isinstance(a, (bool, type(None))):
-                    authentication_status, username = a, b
-                    name = username  # fallback
-                else:
-                    name, authentication_status = a, b
-                    username = name
+    # Normalizar retorno: pode ser tuple de 3 ou 2 elementos
+    name = None
+    authentication_status = None
+    username = None
+    if isinstance(result, (tuple, list)):
+        if len(result) == 3:
+            name, authentication_status, username = result
+        elif len(result) == 2:
+            # detectar qual é qual: auth_status costuma ser bool/None
+            a, b = result
+            if isinstance(a, (bool, type(None))):
+                authentication_status, username = a, b
+                name = username
             else:
-                # forma inesperada: tentar desempacotar da melhor forma
-                try:
-                    name = result[0]
-                    authentication_status = result[1] if len(result) > 1 else None
-                    username = result[2] if len(result) > 2 else name
-                except Exception:
-                    name, authentication_status, username = None, None, None
+                name, authentication_status = a, b
+                username = name
         else:
-            # se result não for tuple (pouco provável), tratamos como nenhum login
-            name, authentication_status, username = None, None, None
-    except Exception:
+            # fallback defensivo
+            try:
+                name = result[0]
+                authentication_status = result[1] if len(result) > 1 else None
+                username = result[2] if len(result) > 2 else name
+            except Exception:
+                name, authentication_status, username = None, None, None
+    else:
+        # caso inesperado
         name, authentication_status, username = None, None, None
 
-    # comportamento pós-login (igual ao que você tinha)
+    # pós-login: preencher session_state
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = username or name or ""
-        st.session_state["role"] = creds.get('usernames', {}).get(username, {}).get('role', '')
+        st.session_state["role"] = credentials.get('usernames', {}).get(username, {}).get('role', '')
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
     elif authentication_status is None:
         st.warning("Por favor, insira usuário e senha")
 
     return authenticator
+
 
 
 def require_login_ui():
