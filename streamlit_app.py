@@ -1,21 +1,18 @@
+# ==========================
+# Imports
+# ==========================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 from io import BytesIO
 from unidecode import unidecode
-import streamlit_authenticator as stauth
 import toml
 import os
-from itertools import zip_longest
-import traceback
-import streamlit_authenticator as stauth
-import inspect
 
-
-# ---------------------------
+# ==========================
 # 1. Funções auxiliares
-# ---------------------------
+# ==========================
 def init_session():
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
@@ -31,7 +28,7 @@ def load_credentials():
       usernames = ["gestor","medico"]
       passwords = ["rh123","med123"]
       roles = ["RH","MEDICO"]
-    Retorna dict no formato esperado pelo streamlit_authenticator:
+    Retorna dict no formato:
     { "usernames": { "gestor": {"name":"Gestor","password":"...","role":"RH"}, ... } }
     """
     raw = None
@@ -50,18 +47,13 @@ def load_credentials():
     if not raw:
         return {"usernames": {}}
 
-    # Se já for dict com 'usernames' como dict, retorna direto
-    if isinstance(raw, dict) and isinstance(raw.get("usernames"), dict):
-        return {"usernames": raw["usernames"]}
-
-    # Caso listas -> converter para dict
     user_list = raw.get("usernames", []) or []
     pass_list = raw.get("passwords", []) or []
     role_list = raw.get("roles", []) or []
     name_list = raw.get("names", []) or []
 
     usernames = {}
-    for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
+    for u, p, r, n in zip(user_list, pass_list, role_list, name_list):
         if not u:
             continue
         display = n or str(u).capitalize()
@@ -69,129 +61,41 @@ def load_credentials():
     return {"usernames": usernames}
 
 
-
-def ensure_hashed_passwords(credentials):
+def login_manual(credentials):
     """
-    Tenta gerar hashes para senhas em texto usando stauth.Hasher.
-    Se houver falha (ex: versão/instalação diferente), mantém senhas em texto e avisa.
+    Login manual via sidebar, sem depender do streamlit_authenticator.
     """
-    users = list(credentials.get("usernames", {}).keys())
-    pwds = [credentials["usernames"][u].get("password", "") for u in users]
+    side = st.sidebar
+    side.write("🔐 Login do Dashboard")
+    side.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
 
-    # heurística: se nenhuma senha curta (texto), assume que já são hashes
-    need_hash = any((pwd and len(pwd) < 20) for pwd in pwds)
-    if not need_hash:
-        return credentials
+    username = side.text_input("Usuário", key="login_user")
+    password = side.text_input("Senha", type="password", key="login_pass")
+    login_button = side.button("Login")
 
-    try:
-        # stauth.Hasher aceita lista de senhas em texto
-        hasher = stauth.Hasher(pwds)
-        hashed = hasher.generate()
-        for u, h in zip(users, hashed):
-            credentials["usernames"][u]["password"] = h
-    except Exception as e:
-        # não quebra: apenas avisa e mantém senhas em texto
-        st.warning("Não foi possível gerar hashes das senhas — mantendo senhas em texto. Verifique a instalação/versão do streamlit_authenticator.")
-        # opcional: mostrar erro técnico (útil localmente)
-        st.sidebar.write("DEBUG: erro ao gerar hashes:", str(e))
-    return credentials
-
-
-def login_authenticator(credentials):
-    """
-    Inicializa Authenticate e força render do form na sidebar.
-    Usa chamada correta: authenticator.login(location="sidebar", key="login", fields=...)
-    Normaliza retorno (2 ou 3 valores) e preenche st.session_state.
-    """
-    import inspect, traceback
-
-    try:
-        authenticator = stauth.Authenticate(
-            credentials,
-            cookie_name="dashboard_cookie",
-            key="dashboard_key",
-            cookie_expiry_days=1
-        )
-    except Exception:
-        st.error("Erro ao inicializar Authenticate — verifique credentials / versão do pacote.")
-        st.text(traceback.format_exc())
-        return None
-
-    # Debug assinatura
-    try:
-        sig = inspect.signature(authenticator.login)
-        st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
-    except Exception:
-        pass
-
-    side_container = st.sidebar.container()
-    side_container.write("🔐 Login do Dashboard")
-    side_container.write("DEBUG: usuários carregados: " + ", ".join(list(credentials.get("usernames", {}).keys())))
-
-    # CHAMADA CORRETA: com fields para garantir que textbox apareçam
-    try:
-        result = authenticator.login(
-            location="sidebar",
-            key="login",
-            fields={"username": "Usuário", "password": "Senha"}
-        )
-    except Exception:
-        side_container.error("Erro ao chamar authenticator.login — veja debug abaixo.")
-        side_container.text(traceback.format_exc())
-        return authenticator
-
-    # Normalizar retorno (pode ser 3 ou 2 itens)
-    name = None
-    authentication_status = None
-    username = None
-    if isinstance(result, (tuple, list)):
-        if len(result) == 3:
-            name, authentication_status, username = result
-        elif len(result) == 2:
-            a, b = result
-            if isinstance(a, (bool, type(None))):
-                authentication_status, username = a, b
-                name = username
-            else:
-                name, authentication_status = a, b
-                username = name
-        else:
-            try:
-                name = result[0]
-                authentication_status = result[1] if len(result) > 1 else None
-                username = result[2] if len(result) > 2 else name
-            except Exception:
-                name, authentication_status, username = None, None, None
-    else:
-        name, authentication_status, username = None, None, None
-
-    # Preencher session_state
-    if authentication_status:
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = username or name or ""
-        st.session_state["role"] = credentials.get('usernames', {}).get(username, {}).get('role', '')
-    elif authentication_status is False:
-        side_container.error("Usuário ou senha inválidos")
-    elif authentication_status is None:
-        side_container.info("Por favor, insira usuário e senha")
-
-    return authenticator
-
-
-
-
-def require_login_ui():
-    if not st.session_state["logged_in"]:
-        st.stop()
-
-def logout(authenticator):
-    if st.session_state["logged_in"]:
-        authenticator.logout("Logout", "sidebar")
+    if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
+        st.session_state["username"] = ""
+        st.session_state["role"] = ""
+
+    if login_button:
+        users = credentials.get("usernames", {})
+        if username in users and users[username]["password"] == password:
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = username
+            st.session_state["role"] = users[username].get("role", "")
+            side.success(f"Bem-vindo, {username}!")
+        else:
+            side.error("Usuário ou senha inválidos")
+
+    if not st.session_state["logged_in"]:
+        st.stop()  # impede que o dashboard carregue antes do login
+
 
 def clean_cols(df):
     df.columns = [unidecode(col).strip().replace(' ','_').replace('-','_') for col in df.columns]
     return df
+
 
 def mascarar_pii(df):
     df_masked = df.copy()
@@ -199,30 +103,29 @@ def mascarar_pii(df):
         df_masked[col] = df_masked[col].apply(lambda x: unidecode(str(x)[0]) + "***" if pd.notnull(x) else x)
     return df_masked
 
-# ---------------------------
+
+# ==========================
 # 2. Inicializar sessão
-# ---------------------------
+# ==========================
 init_session()
 st.set_page_config(page_title="Dashboard Plano de Saúde", layout="wide")
 st.title("📊 Dashboard de Utilização do Plano de Saúde")
 
-# ---------------------------
-# 3. Carregar secrets
-# ---------------------------
+# ==========================
+# 3. Carregar credenciais
+# ==========================
 credentials = load_credentials()
 
-# ---------------------------
-# 4. Login
-# ---------------------------
-authenticator = login_authenticator(credentials)
-require_login_ui()
+# ==========================
+# 4. Login manual
+# ==========================
+login_manual(credentials)
 st.sidebar.markdown(f"**Usuário:** {st.session_state['username']}")
 st.sidebar.markdown(f"**Papel:** {st.session_state['role']}")
-logout(authenticator)
 
-# ---------------------------
+# ==========================
 # 5. Upload de arquivo
-# ---------------------------
+# ==========================
 uploaded_file = st.file_uploader("Escolha o arquivo .xlsx", type="xlsx")
 
 if uploaded_file is not None:
@@ -340,8 +243,9 @@ if uploaded_file is not None:
         utilizacao_display = utilizacao_filtrada.copy()
         cadastro_display = cadastro_filtrado.copy()
 
-    # ---------------------------
+    # ==========================
     # Tabs
+    # ==========================
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "KPIs Gerais",
         "Comparativo de Planos",
@@ -350,8 +254,7 @@ if uploaded_file is not None:
         "Exportação"
     ])
 
-    # ---------------------------
-    # Tab1: KPIs Gerais
+    # ---------- Tab1 ----------
     with tab1:
         st.subheader("📌 KPIs Gerais")
         custo_total = utilizacao_display['Valor'].sum() if 'Valor' in utilizacao_display.columns else 0
@@ -377,8 +280,7 @@ if uploaded_file is not None:
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------------------
-    # Tab2: Comparativo de Planos
+    # ---------- Tab2 ----------
     with tab2:
         possible_cols = [col for col in utilizacao_display.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
         if possible_cols:
@@ -393,8 +295,7 @@ if uploaded_file is not None:
         else:
             st.info("Coluna de plano não encontrada. Verifique o arquivo ou nomes das colunas.")
 
-    # ---------------------------
-    # Tab3: Alertas & Inconsistências
+    # ---------- Tab3 ----------
     with tab3:
         st.subheader("🚨 Alertas")
         custo_lim = st.number_input("Limite de custo (R$)", value=5000)
@@ -433,8 +334,7 @@ if uploaded_file is not None:
         else:
             st.write("Nenhuma inconsistência encontrada.")
 
-    # ---------------------------
-    # Tab4: CIDs Crônicos & Procedimentos
+    # ---------- Tab4 ----------
     with tab4:
         st.subheader("🏥 Beneficiários Crônicos")
         cids_cronicos = ['E11','I10','J45']
@@ -447,8 +347,7 @@ if uploaded_file is not None:
             top_proc = utilizacao_display.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
             st.dataframe(top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
 
-    # ---------------------------
-    # Tab5: Exportação
+    # ---------- Tab5 ----------
     with tab5:
         st.subheader("📤 Exportar Relatório")
         buffer = BytesIO()
@@ -468,5 +367,6 @@ if uploaded_file is not None:
         st.download_button("📥 Baixar Relatório Completo", buffer, "dashboard_plano_saude.xlsx", "application/vnd.ms-excel")
 
     st.success("✅ Dashboard carregado com sucesso!")
+
 else:
     st.info("Aguardando upload do arquivo .xlsx")
