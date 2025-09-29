@@ -7,6 +7,8 @@ from unidecode import unidecode
 import streamlit_authenticator as stauth
 import toml
 import os
+from itertools import zip_longest
+
 
 # ---------------------------
 # 1. Funções auxiliares
