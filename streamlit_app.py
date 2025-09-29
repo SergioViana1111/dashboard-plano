@@ -22,42 +22,59 @@ def init_session():
 
 def load_credentials():
     """
-    Lê credentials de st.secrets (Cloud) ou de secrets.toml local.
-    Suporta formato de listas:
-      [credentials]
-      usernames = ["gestor","medico"]
-      passwords = ["rh123","med123"]
-      roles = ["RH","MEDICO"]
-    Retorna dict no formato:
-    { "usernames": { "gestor": {"name":"Gestor","password":"...","role":"RH"}, ... } }
+    Carrega credenciais de st.secrets (Streamlit Cloud) ou do arquivo local secrets.toml.
+    
+    Formato esperado no TOML:
+    [credentials]
+    usernames = ["gestor", "medico"]
+    passwords = ["rh123", "med123"]
+    roles = ["RH", "MEDICO"]
+    (names = ["Gestor", "Médico"] opcional)
+    
+    Retorna dicionário no formato:
+    {
+        "usernames": {
+            "gestor": {"name":"Gestor","password":"rh123","role":"RH"},
+            "medico": {"name":"Medico","password":"med123","role":"MEDICO"}
+        }
+    }
     """
+
     raw = None
+
+    # Tenta carregar do Streamlit Cloud
     if hasattr(st, "secrets") and getattr(st, "secrets"):
         raw = st.secrets.get("credentials", None)
 
+    # Se não estiver no Cloud, tenta arquivo local
     if raw is None:
         path = os.path.join(os.getcwd(), "secrets.toml")
         if os.path.exists(path):
             try:
                 data = toml.load(path)
                 raw = data.get("credentials", None)
-            except Exception:
+            except Exception as e:
+                st.warning(f"Erro ao ler secrets.toml: {e}")
                 raw = None
 
     if not raw:
         return {"usernames": {}}
 
+    # Listas do TOML
     user_list = raw.get("usernames", []) or []
     pass_list = raw.get("passwords", []) or []
     role_list = raw.get("roles", []) or []
     name_list = raw.get("names", []) or []
 
+    # Monta dicionário de usuários
+    from itertools import zip_longest
     usernames = {}
-    for u, p, r, n in zip(user_list, pass_list, role_list, name_list):
+    for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
         if not u:
             continue
         display = n or str(u).capitalize()
-        usernames[str(u)] = {"name": display, "password": p or "", "role": r or ""}
+        usernames[str(u)] = {"name": display, "password": p, "role": r}
+
     return {"usernames": usernames}
 
 
