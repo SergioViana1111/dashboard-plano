@@ -40,11 +40,13 @@ def login_authenticator(credentials):
         key="dashboard_key",
         cookie_expiry_days=1
     )
-    # chamada corrigida
+    
+    # chamada correta
     name, authentication_status, username = authenticator.login(
-        location="sidebar",
-        key="Login"
+        location="sidebar",  # sempre como keyword
+        key="Login"          # sempre como keyword
     )
+    
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = name
@@ -53,7 +55,9 @@ def login_authenticator(credentials):
         st.error("Usuário ou senha inválidos")
     elif authentication_status is None:
         st.warning("Por favor, insira usuário e senha")
+    
     return authenticator
+
 
 
 def require_login_ui():
