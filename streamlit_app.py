@@ -29,10 +29,12 @@ def login():
                 st.session_state.username = username
                 st.session_state.role = roles[idx]
                 st.success(f"Bem-vindo(a), {username}!")
+                st.experimental_rerun()  # Força o Streamlit a recarregar o app
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
+
 
 if not st.session_state.logged_in:
     login()
