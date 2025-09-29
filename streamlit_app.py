@@ -50,15 +50,17 @@ def login():
 
 
 
-if not st.session_state.logged_in:
-    login()
-else:
+# Chama a função de login
+login()
+
+# Se estiver logado, carrega o dashboard imediatamente
+if st.session_state.logged_in:
+    role = st.session_state.role
+    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
     # ---------------------------
     # 1. Configuração do Streamlit
     # ---------------------------
-    # Se chegou aqui, já está logado — carrega o dashboard
-    role = st.session_state.role
-    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
+    
 
     # ---------------------------
     # 2. Upload do arquivo
