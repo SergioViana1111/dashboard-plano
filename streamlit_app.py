@@ -10,6 +10,7 @@ import os
 from itertools import zip_longest
 import traceback
 import streamlit_authenticator as stauth
+import inspect
 
 
 # ---------------------------
@@ -90,7 +91,14 @@ def ensure_hashed_passwords(credentials):
 
 
 def login_authenticator(credentials):
-    creds = ensure_hashed_passwords(credentials)
+    """
+    Versão resiliente de login_authenticator:
+    - inicializa Authenticate
+    - exibe assinatura de .login() no sidebar para debugging
+    - tenta várias formas de chamar .login() e aceita retornos com 2 ou 3 valores
+    """
+    # NÃO tenta gerar hashes aqui (evita incompatibilidade com versões).
+    creds = credentials
 
     try:
         authenticator = stauth.Authenticate(
@@ -99,23 +107,83 @@ def login_authenticator(credentials):
             key="dashboard_key",
             cookie_expiry_days=1
         )
-    except Exception as e:
+    except Exception:
         st.error("Erro ao inicializar Authenticate — verifique o formato de credentials e a versão do streamlit_authenticator.")
         st.text(traceback.format_exc())
-        # retornar um objeto vazio/None pode quebrar o app; retornamos None e o chamador deve tratar
         return None
 
-    # chamada protegida para capturar erros durante o .login()
+    # mostrar assinatura real da função .login para ajudar debug
     try:
-        name, authentication_status, username = authenticator.login("Login", location="sidebar")
-    except Exception as e:
-        st.error("Erro ao chamar authenticator.login — veja o stacktrace para debug.")
-        st.text(traceback.format_exc())
-        # mostre quais usuários foram carregados (nome apenas)
-        st.sidebar.write("DEBUG: usuários carregados:", list(creds.get("usernames", {}).keys()))
+        sig = inspect.signature(authenticator.login)
+        st.sidebar.write("DEBUG: assinatura authenticator.login:", str(sig))
+    except Exception:
+        # se não for possível inspecionar, não quebra
+        pass
+
+    # Tentar várias chamadas possíveis — parar na primeira que não der TypeError
+    login_attempts = [
+        lambda: authenticator.login("Login", location="sidebar"),
+        lambda: authenticator.login("Login", "sidebar"),
+        lambda: authenticator.login(location="sidebar"),
+        lambda: authenticator.login("Login"),
+        lambda: authenticator.login()
+    ]
+
+    result = None
+    last_exc = None
+    for fn in login_attempts:
+        try:
+            result = fn()
+            # se não lançar TypeError, quebrar o loop
+            break
+        except TypeError as e:
+            last_exc = e
+            # tentar próxima forma
+        except Exception as e:
+            # capturar outros erros e mostrar para debug, mas tentar próximas formas
+            last_exc = e
+
+    if result is None:
+        st.error("Não foi possível chamar authenticator.login() com as tentativas automáticas.")
+        if last_exc is not None:
+            st.sidebar.write("DEBUG: último erro ao tentar login:", str(last_exc))
+            st.text(traceback.format_exc())
+        # opcional: parar execução
         return authenticator
 
-    # comportamento normal pós-login
+    # result pode ser:
+    # - tuple de 3 itens: (name_display, auth_status, username_key)
+    # - tuple de 2 itens: (auth_status, username)  (algumas versões retornam só 2)
+    # - outras variações; vamos normalizar:
+    try:
+        if isinstance(result, tuple) or isinstance(result, list):
+            if len(result) == 3:
+                name, authentication_status, username = result
+            elif len(result) == 2:
+                # possível (authentication_status, username) ou (name, authentication_status)
+                # vamos tentar detectar tipo pelo valor (auth_status é bool/None usually)
+                a, b = result
+                if isinstance(a, (bool, type(None))):
+                    authentication_status, username = a, b
+                    name = username  # fallback
+                else:
+                    name, authentication_status = a, b
+                    username = name
+            else:
+                # forma inesperada: tentar desempacotar da melhor forma
+                try:
+                    name = result[0]
+                    authentication_status = result[1] if len(result) > 1 else None
+                    username = result[2] if len(result) > 2 else name
+                except Exception:
+                    name, authentication_status, username = None, None, None
+        else:
+            # se result não for tuple (pouco provável), tratamos como nenhum login
+            name, authentication_status, username = None, None, None
+    except Exception:
+        name, authentication_status, username = None, None, None
+
+    # comportamento pós-login (igual ao que você tinha)
     if authentication_status:
         st.session_state["logged_in"] = True
         st.session_state["username"] = username or name or ""
