@@ -18,56 +18,100 @@ def init_session():
         st.session_state["role"] = ""
 
 def load_credentials():
-    """Carrega credenciais do Streamlit Cloud ou do arquivo local secrets.toml"""
-    if hasattr(st, "secrets"):
-        # Streamlit Cloud
-        credentials = {
-            "usernames": {
-                user: {"name": user.capitalize(), "password": pwd, "role": role}
-                for user, pwd, role in zip(
-                    st.secrets["credentials"]["usernames"],
-                    st.secrets["credentials"]["passwords"],
-                    st.secrets["credentials"].get("roles", ["RH", "MEDICO"])
-                )
-            }
-        }
-    else:
-        # Local
+    """
+    Suporta o formato:
+    [credentials]
+    usernames = ["gestor","medico"]
+    passwords = ["rh123","med123"]
+    roles = ["RH","MEDICO"]
+    """
+    # tenta pegar de st.secrets primeiro (Streamlit Cloud)
+    raw = None
+    if hasattr(st, "secrets") and getattr(st, "secrets"):
+        raw = st.secrets.get("credentials", None)
+
+    # se não tiver, tenta arquivo local secrets.toml
+    if raw is None:
         path = os.path.join(os.getcwd(), "secrets.toml")
-        data = toml.load(path)
-        credentials = {
-            "usernames": {
-                user: {"name": user.capitalize(), "password": pwd, "role": role}
-                for user, pwd, role in zip(
-                    data["credentials"]["usernames"],
-                    data["credentials"]["passwords"],
-                    data["credentials"].get("roles", ["RH", "MEDICO"])
-                )
-            }
-        }
+        if os.path.exists(path):
+            data = toml.load(path)
+            raw = data.get("credentials", None)
+
+    if not raw:
+        return {"usernames": {}}
+
+    # Se raw já for dict com "usernames" como dict, só normaliza
+    if isinstance(raw, dict) and isinstance(raw.get("usernames"), dict):
+        return {"usernames": raw["usernames"]}
+
+    # Caso seja o formato de listas (como você mostrou), converte para dict
+    user_list = raw.get("usernames", []) or []
+    pass_list = raw.get("passwords", []) or []
+    role_list = raw.get("roles", []) or []
+    name_list = raw.get("names", []) or []  # opcional
+
+    usernames = {}
+    # zip_longest para evitar perder itens se listas tiverem comprimentos diferentes
+    for u, p, r, n in zip_longest(user_list, pass_list, role_list, name_list, fillvalue=""):
+        if not u:
+            continue
+        display = n or str(u).capitalize()
+        usernames[str(u)] = {"name": display, "password": p or "", "role": r or ""}
+    return {"usernames": usernames}
+
+
+def ensure_hashed_passwords(credentials):
+    """
+    Gera hashes para senhas em texto (heurística: se comprimento < 20, considera texto).
+    Substitui as senhas no dict por hashes no mesmo mapeamento.
+    """
+    users = list(credentials.get("usernames", {}).keys())
+    pwds = [credentials["usernames"][u].get("password", "") for u in users]
+
+    # decidir se precisamos gerar hashes: se qualquer senha parecer 'plana' (curta)
+    need_hash = any((pwd and len(pwd) < 20) for pwd in pwds)
+    if not need_hash:
+        return credentials
+
+    try:
+        hasher = stauth.Hasher(pwds)
+        hashed = hasher.generate()
+        # aplicar hashes de volta mantendo ordem users
+        for u, h in zip(users, hashed):
+            credentials["usernames"][u]["password"] = h
+    except Exception:
+        # se falhar no hasher, simplesmente não altera (não quebrar app)
+        st.warning("Não foi possível gerar hashes das senhas — verifique a instalação do streamlit_authenticator.")
     return credentials
 
+
 def login_authenticator(credentials):
+    # normaliza + gera hashes se necessário
+    creds = ensure_hashed_passwords(credentials)
+
     authenticator = stauth.Authenticate(
-        credentials,
+        creds,
         cookie_name="dashboard_cookie",
         key="dashboard_key",
         cookie_expiry_days=1
     )
 
-    # IMPORTANTE: agora capturamos 3 valores (display_name, auth_status, username_key)
-    name, authentication_status, username = authenticator.login("Login", location="sidebar")
+    # chamada protegida para capturar tracebacks úteis
+    try:
+        name, authentication_status, username = authenticator.login("Login", location="sidebar")
+    except Exception:
+        st.error("Erro ao chamar authenticator.login — veja o stacktrace para debug.")
+        st.text(traceback.format_exc())
+        # mostrar apenas as chaves (sem senhas) para checagem rápida
+        st.sidebar.write("DEBUG: usuários carregados:", list(creds.get("usernames", {}).keys()))
+        # retornar o objeto authenticator mesmo assim (ou você pode raise se preferir)
+        return authenticator
 
+    # comportamento normal pós-login
     if authentication_status:
         st.session_state["logged_in"] = True
-        # username é a chave usada em credentials['usernames'] (ex: 'sergio'), 
-        # name é o nome exibido (ex: 'Sergio')
         st.session_state["username"] = username or name or ""
-        # proteger caso username seja None ou não exista no dict
-        try:
-            st.session_state["role"] = credentials['usernames'][username].get('role', '')
-        except Exception:
-            st.session_state["role"] = ''
+        st.session_state["role"] = creds.get('usernames', {}).get(username, {}).get('role', '')
     elif authentication_status is False:
         st.error("Usuário ou senha inválidos")
     elif authentication_status is None:
