@@ -143,7 +143,7 @@ st.sidebar.markdown(f"**Papel:** {st.session_state['role']}")
 # ==========================
 # 5. Upload de arquivo
 # ==========================
-uploaded_file = st.file_uploader("Escolha o arquivo .xlsx", type="xlsx")
+uploaded_file = st.file_uploader("Escolha o arquivo .xltx", type="xltx")
 
 if uploaded_file is not None:
     # Leitura das abas
