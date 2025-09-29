@@ -9,12 +9,6 @@ from io import BytesIO
 # 0. Autenticação
 # ---------------------------
 
-# Streamlit secrets (em .streamlit/secrets.toml):
-# [credentials]
-# usernames = ["gestor", "medico"]
-# passwords = ["rh123", "med123"]
-# roles = ["RH", "MEDICO"]
-
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -43,11 +37,13 @@ def login():
 if not st.session_state.logged_in:
     login()
 else:
+    role = st.session_state.role  # Cargo do usuário
+
     # ---------------------------
     # 1. Configuração do Streamlit
     # ---------------------------
     st.set_page_config(page_title="Dashboard Plano de Saúde", layout="wide")
-    st.title("📊 Dashboard de Utilização do Plano de Saúde")
+    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
 
     # ---------------------------
     # 2. Upload do arquivo
@@ -65,7 +61,7 @@ else:
             atestados = pd.read_excel(uploaded_file, sheet_name='Atestados')
         except:
             atestados = pd.DataFrame()
-        
+
         # ---------------------------
         # 3. Padronização de colunas
         # ---------------------------
@@ -166,129 +162,120 @@ else:
             ]
 
         # ---------------------------
-        # 8. Tabs do Dashboard
+        # 8. Dashboard Tabs por Role
         # ---------------------------
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "KPIs Gerais", "Comparativo de Planos", "Alertas & Inconsistências",
-            "CIDs Crônicos & Procedimentos", "Exportação"
-        ])
 
-        # ---------------------------
-        # Tab1: KPIs Gerais
-        # ---------------------------
-        with tab1:
-            st.subheader("📌 KPIs Gerais")
-            custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0
-            st.metric("Custo Total (R$)", f"{custo_total:,.2f}")
+        # Definir abas disponíveis por cargo
+        if role == "RH":
+            tabs = ["KPIs Gerais", "Comparativo de Planos", "Alertas & Inconsistências", "Exportação"]
+        elif role == "MEDICO":
+            tabs = ["CIDs Crônicos & Procedimentos"]
+        else:
+            tabs = []
 
-            if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
-                top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
-                st.write("**Top 10 Beneficiários por Custo**")
-                st.dataframe(custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
-                st.write("**Top 10 Beneficiários por Volume**")
-                st.dataframe(top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}))
+        tab_objects = st.tabs(tabs)
 
-            if 'Data_do_Atendimento' in utilizacao_filtrada.columns:
-                utilizacao_filtrada['Mes_Ano'] = utilizacao_filtrada['Data_do_Atendimento'].dt.to_period('M')
-                evolucao = utilizacao_filtrada.groupby('Mes_Ano')['Valor'].sum().reset_index()
-                evolucao['Mes_Ano'] = evolucao['Mes_Ano'].astype(str)
-                fig = px.bar(
-                    evolucao, x='Mes_Ano', y='Valor', color='Valor', text='Valor',
-                    labels={'Mes_Ano':'Mês/Ano','Valor':'R$'}, height=400
-                )
-                st.plotly_chart(fig, use_container_width=True)
+        for i, tab_name in enumerate(tabs):
+            with tab_objects[i]:
+                if tab_name == "KPIs Gerais":
+                    st.subheader("📌 KPIs Gerais")
+                    custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0
+                    st.metric("Custo Total (R$)", f"{custo_total:,.2f}")
 
-        # ---------------------------
-        # Tab2: Comparativo de Planos
-        # ---------------------------
-        with tab2:
-            possible_cols = [col for col in utilizacao_filtrada.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
-            if possible_cols:
-                plano_col = possible_cols[0]
-                st.subheader("📊 Comparativo de Planos")
-                comp = utilizacao_filtrada.groupby(plano_col)['Valor'].sum().reset_index()
-                fig = px.bar(comp, x=plano_col, y='Valor', color=plano_col, text='Valor', height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                    if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                        custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
+                        top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
+                        st.write("**Top 10 Beneficiários por Custo**")
+                        st.dataframe(custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
+                        st.write("**Top 10 Beneficiários por Volume**")
+                        st.dataframe(top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}))
 
-                comp_volume = utilizacao_filtrada.groupby(plano_col).size().reset_index(name='Volume')
-                fig2 = px.bar(comp_volume, x=plano_col, y='Volume', color=plano_col, text='Volume', height=400)
-                st.plotly_chart(fig2, use_container_width=True)
-            else:
-                st.info("Coluna de plano não encontrada. Verifique o arquivo ou nomes das colunas.")
+                    if 'Data_do_Atendimento' in utilizacao_filtrada.columns:
+                        utilizacao_filtrada['Mes_Ano'] = utilizacao_filtrada['Data_do_Atendimento'].dt.to_period('M')
+                        evolucao = utilizacao_filtrada.groupby('Mes_Ano')['Valor'].sum().reset_index()
+                        evolucao['Mes_Ano'] = evolucao['Mes_Ano'].astype(str)
+                        fig = px.bar(
+                            evolucao, x='Mes_Ano', y='Valor', color='Valor', text='Valor',
+                            labels={'Mes_Ano':'Mês/Ano','Valor':'R$'}, height=400
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
 
-        # ---------------------------
-        # Tab3: Alertas & Inconsistências
-        # ---------------------------
-        with tab3:
-            st.subheader("🚨 Alertas")
-            custo_lim = st.number_input("Limite de custo (R$)", value=5000)
-            vol_lim = st.number_input("Limite de atendimentos", value=20)
+                elif tab_name == "Comparativo de Planos":
+                    possible_cols = [col for col in utilizacao_filtrada.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
+                    if possible_cols:
+                        plano_col = possible_cols[0]
+                        st.subheader("📊 Comparativo de Planos")
+                        comp = utilizacao_filtrada.groupby(plano_col)['Valor'].sum().reset_index()
+                        fig = px.bar(comp, x=plano_col, y='Valor', color=plano_col, text='Valor', height=400)
+                        st.plotly_chart(fig, use_container_width=True)
 
-            if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum()
-                top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size()
-                alert_custo = custo_por_benef[custo_por_benef > custo_lim]
-                alert_vol = top10_volume[top10_volume > vol_lim]
+                        comp_volume = utilizacao_filtrada.groupby(plano_col).size().reset_index(name='Volume')
+                        fig2 = px.bar(comp_volume, x=plano_col, y='Volume', color=plano_col, text='Volume', height=400)
+                        st.plotly_chart(fig2, use_container_width=True)
+                    else:
+                        st.info("Coluna de plano não encontrada.")
 
-                if not alert_custo.empty:
-                    st.write("**Beneficiários acima do limite de custo:**")
-                    st.dataframe(alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
-                if not alert_vol.empty:
-                    st.write("**Beneficiários acima do limite de volume:**")
-                    st.dataframe(alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}))
+                elif tab_name == "Alertas & Inconsistências":
+                    st.subheader("🚨 Alertas")
+                    custo_lim = st.number_input("Limite de custo (R$)", value=5000)
+                    vol_lim = st.number_input("Limite de atendimentos", value=20)
 
-            st.subheader("⚠️ Inconsistências")
-            inconsistencias = pd.DataFrame()
-            if sexo_col and 'Codigo_do_CID' in utilizacao_filtrada.columns:
-                def padronizar_nome(nome): return unidecode(str(nome)).strip().upper()
-                utilizacao_filtrada['Nome_merge'] = utilizacao_filtrada['Nome_do_Associado'].apply(padronizar_nome)
-                cadastro_filtrado['Nome_merge'] = cadastro_filtrado['Nome_do_Associado'].apply(padronizar_nome)
-                utilizacao_merge = utilizacao_filtrada.merge(
-                    cadastro_filtrado[['Nome_merge', sexo_col]].drop_duplicates(), on='Nome_merge', how='left'
-                )
-                if sexo_col not in utilizacao_merge.columns:
-                    utilizacao_merge[sexo_col] = 'Desconhecido'
-                else:
-                    utilizacao_merge[sexo_col] = utilizacao_merge[sexo_col].fillna('Desconhecido')
-                parto_masc = utilizacao_merge[(utilizacao_merge['Codigo_do_CID']=='O80') & (utilizacao_merge[sexo_col]=='M')]
-                if not parto_masc.empty:
-                    inconsistencias = pd.concat([inconsistencias, parto_masc])
-            if not inconsistencias.empty:
-                st.dataframe(inconsistencias)
-            else:
-                st.write("Nenhuma inconsistência encontrada.")
+                    if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                        custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum()
+                        top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size()
+                        alert_custo = custo_por_benef[custo_por_benef > custo_lim]
+                        alert_vol = top10_volume[top10_volume > vol_lim]
 
-        # ---------------------------
-        # Tab4: CIDs Crônicos & Procedimentos
-        # ---------------------------
-        with tab4:
-            st.subheader("🏥 Beneficiários Crônicos")
-            cids_cronicos = ['E11','I10','J45']
-            if 'Codigo_do_CID' in utilizacao_filtrada.columns:
-                utilizacao_filtrada['Cronico'] = utilizacao_filtrada['Codigo_do_CID'].isin(cids_cronicos)
-                beneficiarios_cronicos = utilizacao_filtrada[utilizacao_filtrada['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                st.dataframe(beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
+                        if not alert_custo.empty:
+                            st.write("**Beneficiários acima do limite de custo:**")
+                            st.dataframe(alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
+                        if not alert_vol.empty:
+                            st.write("**Beneficiários acima do limite de volume:**")
+                            st.dataframe(alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}))
 
-            st.subheader("💊 Top Procedimentos")
-            if 'Nome_do_Procedimento' in utilizacao_filtrada.columns:
-                top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                st.dataframe(top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
+                    st.subheader("⚠️ Inconsistências")
+                    inconsistencias = pd.DataFrame()
+                    if sexo_col and 'Codigo_do_CID' in utilizacao_filtrada.columns:
+                        def padronizar_nome(nome): return unidecode(str(nome)).strip().upper()
+                        utilizacao_filtrada['Nome_merge'] = utilizacao_filtrada['Nome_do_Associado'].apply(padronizar_nome)
+                        cadastro_filtrado['Nome_merge'] = cadastro_filtrado['Nome_do_Associado'].apply(padronizar_nome)
+                        utilizacao_merge = utilizacao_filtrada.merge(
+                            cadastro_filtrado[['Nome_merge', sexo_col]].drop_duplicates(), on='Nome_merge', how='left'
+                        )
+                        if sexo_col not in utilizacao_merge.columns:
+                            utilizacao_merge[sexo_col] = 'Desconhecido'
+                        else:
+                            utilizacao_merge[sexo_col] = utilizacao_merge[sexo_col].fillna('Desconhecido')
+                        parto_masc = utilizacao_merge[(utilizacao_merge['Codigo_do_CID']=='O80') & (utilizacao_merge[sexo_col]=='M')]
+                        if not parto_masc.empty:
+                            inconsistencias = pd.concat([inconsistencias, parto_masc])
+                    if not inconsistencias.empty:
+                        st.dataframe(inconsistencias)
+                    else:
+                        st.write("Nenhuma inconsistência encontrada.")
 
-        # ---------------------------
-        # Tab5: Exportação
-        # ---------------------------
-        with tab5:
-            st.subheader("📤 Exportar Relatório")
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                utilizacao_filtrada.to_excel(writer, sheet_name='Utilizacao', index=False)
-                cadastro_filtrado.to_excel(writer, sheet_name='Cadastro', index=False)
-                if not medicina_trabalho.empty:
-                    medicina_trabalho.to_excel(writer, sheet_name='Medicina_do_Trabalho', index=False)
-                if not atestados.empty:
-                    atestados.to_excel(writer, sheet_name='Atestados', index=False)
-            st.download_button("📥 Baixar Relatório Completo", buffer, "dashboard_plano_saude.xlsx", "application/vnd.ms-excel")
-            st.success("✅ Dashboard carregado com sucesso!")
-    else:
-        st.info("Aguardando upload do arquivo .xltx")
+                elif tab_name == "Exportação":
+                    st.subheader("📤 Exportar Relatório")
+                    buffer = BytesIO()
+                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                        utilizacao_filtrada.to_excel(writer, sheet_name='Utilizacao', index=False)
+                        cadastro_filtrado.to_excel(writer, sheet_name='Cadastro', index=False)
+                        if not medicina_trabalho.empty:
+                            medicina_trabalho.to_excel(writer, sheet_name='Medicina_do_Trabalho', index=False)
+                        if not atestados.empty:
+                            atestados.to_excel(writer, sheet_name='Atestados', index=False)
+                    st.download_button("📥 Baixar Relatório Completo", buffer, "dashboard_plano_saude.xlsx", "application/vnd.ms-excel")
+                    st.success("✅ Dashboard carregado com sucesso!")
+
+                elif tab_name == "CIDs Crônicos & Procedimentos":
+                    st.subheader("🏥 Beneficiários Crônicos")
+                    cids_cronicos = ['E11','I10','J45']
+                    if 'Codigo_do_CID' in utilizacao_filtrada.columns:
+                        utilizacao_filtrada['Cronico'] = utilizacao_filtrada['Codigo_do_CID'].isin(cids_cronicos)
+                        beneficiarios_cronicos = utilizacao_filtrada[utilizacao_filtrada['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
+                        st.dataframe(beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}))
+
+                    st.subheader("💊 Top Procedimentos")
+                    if 'Nome_do_Procedimento' in utilizacao_filtrada.columns:
+                        top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
+                        st.dataframe(top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
