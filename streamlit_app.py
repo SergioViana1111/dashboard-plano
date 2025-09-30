@@ -64,66 +64,39 @@ if "selected_benef" not in st.session_state:
     st.session_state.selected_benef = None
 
 def login():
-    # Inicializa inputs no session_state
-    if "username_input" not in st.session_state:
-        st.session_state.username_input = ""
-    if "password_input" not in st.session_state:
-        st.session_state.password_input = ""
-    
     st.sidebar.subheader("🔐 Login")
-    st.session_state.username_input = st.sidebar.text_input(
-        "Usuário", st.session_state.username_input, key="user_login_input" # Adiciona key
-    )
-    st.session_state.password_input = st.sidebar.text_input(
-        "Senha", st.session_state.password_input, type="password", key="password_login_input" # Adiciona key
-    )
+    username = st.sidebar.text_input("Usuário")
+    password = st.sidebar.text_input("Senha", type="password")
     
-    # Simulação de st.secrets para rodar localmente se não estiver no Streamlit Cloud
-    if 'credentials' not in st.secrets:
-        st.secrets['credentials'] = {
-            "usernames": ["rh_teste", "medico_teste"],
-            "passwords": ["senha_rh", "senha_med"],
-            "roles": ["RH", "MEDICO"]
-        }
-
     if st.sidebar.button("Entrar"):
         usernames = st.secrets["credentials"]["usernames"]
         passwords = st.secrets["credentials"]["passwords"]
         roles = st.secrets["credentials"]["roles"]
-        
-        if st.session_state.username_input in usernames:
-            idx = usernames.index(st.session_state.username_input)
-            if st.session_state.password_input == passwords[idx]:
+
+        if username in usernames:
+            idx = usernames.index(username)
+            if password == passwords[idx]:
                 st.session_state.logged_in = True
-                st.session_state.username = st.session_state.username_input
+                st.session_state.username = username
                 st.session_state.role = roles[idx]
-                st.success(f"Bem-vindo(a), {st.session_state.username}!")
-                
-                # CORREÇÃO DE LOGIN:
-                # Usa st.components.v1.html para forçar a recarga limpa da página via JavaScript.
-                # Isso resolve problemas de estado (AttributeError) que podem ocorrer
-                # ao tentar renderizar o dashboard imediatamente após o sucesso no login.
-                components = streamlit.components.v1
-                components.html(
-                    """<script>
-                        // Recarrega a página no iframe pai (o ambiente do Streamlit)
-                        window.parent.location.reload();
-                    </script>""",
-                    height=0
-                )
-                return # Garante que nada mais no Streamlit seja executado até a recarga.
+                st.success(f"Bem-vindo(a), {username}!")
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
 
-# Chama a função de login
-login()
+# Chama login
+if not st.session_state.get("logged_in", False):
+    login()
+else:
+    # ---------------------------
+    # Dashboard
+    # ---------------------------
+    st.title(f"📊 Dashboard - {st.session_state.role}")
+    uploaded_file = st.file_uploader("Escolha o arquivo .xltx", type="xltx")
+    if uploaded_file is not None:
+        st.success("Arquivo carregado com sucesso!")
 
-# Se estiver logado, carrega o dashboard imediatamente
-if st.session_state.logged_in:
-    role = st.session_state.role
-    st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
     
     # ---------------------------
     # 2. Upload do arquivo
