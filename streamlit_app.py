@@ -56,44 +56,59 @@ import streamlit as st
 # Configuração inicial do Streamlit
 st.set_page_config(layout="wide")
 
-# Inicializa variáveis de sessão relacionadas ao login
+# ---------------------------
+# Inicializa variáveis de sessão
+# ---------------------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "role" not in st.session_state:
     st.session_state.role = ""
-
-# Inicializa variável de seleção de beneficiário
 if "selected_benef" not in st.session_state:
     st.session_state.selected_benef = None
-
-# Inicializa variável do arquivo enviado para evitar NameError
 if "uploaded_file" not in st.session_state:
     st.session_state.uploaded_file = None
 
-
+# ---------------------------
+# Função de login
+# ---------------------------
 def login():
     st.sidebar.subheader("🔐 Login")
-    username = st.sidebar.text_input("Usuário")
-    password = st.sidebar.text_input("Senha", type="password")
+    username_input = st.sidebar.text_input("Usuário")
+    password_input = st.sidebar.text_input("Senha", type="password")
     
     if st.sidebar.button("Entrar"):
+        # Simulação de credenciais (ou usar st.secrets)
+        if 'credentials' not in st.secrets:
+            st.secrets['credentials'] = {
+                "usernames": ["gestor", "rh_teste", "medico_teste"],
+                "passwords": ["senha_gestor", "senha_rh", "senha_med"],
+                "roles": ["GESTOR", "RH", "MEDICO"]
+            }
+        
         usernames = st.secrets["credentials"]["usernames"]
         passwords = st.secrets["credentials"]["passwords"]
         roles = st.secrets["credentials"]["roles"]
 
-        if username in usernames:
-            idx = usernames.index(username)
-            if password == passwords[idx]:
+        if username_input in usernames:
+            idx = usernames.index(username_input)
+            if password_input == passwords[idx]:
                 st.session_state.logged_in = True
-                st.session_state.username = username
+                st.session_state.username = username_input
                 st.session_state.role = roles[idx]
-                st.success(f"Bem-vindo(a), {username}!")
+                st.success(f"Bem-vindo(a), {username_input}!")
             else:
                 st.error("Senha incorreta")
         else:
             st.error("Usuário não encontrado")
+
+# ---------------------------
+# Chamada de login
+# ---------------------------
+if not st.session_state.logged_in:
+    login()
+
 
 # Chama login
 if not st.session_state.get("logged_in", False):
