@@ -69,10 +69,7 @@ login()
 if st.session_state.logged_in:
     role = st.session_state.role
     st.title(f"📊 Dashboard de Utilização do Plano de Saúde - {role}")
-    # ---------------------------
-    # 1. Configuração do Streamlit - (Já movida para cima, mantido o número do passo)
-    # ---------------------------
-
+    
     # ---------------------------
     # 2. Upload do arquivo
     # ---------------------------
@@ -228,7 +225,7 @@ if st.session_state.logged_in:
         tab_objects = st.tabs(tabs)
 
         # ---------------------------
-        # Implementação da aba "Busca"
+        # 8.1 Implementação da aba "Busca" e Detalhes
         # ---------------------------
         if "Busca" in tabs:
             idx_busca = tabs.index("Busca")
@@ -248,14 +245,12 @@ if st.session_state.logged_in:
                 else:
                     # quando vazio, sugerir top 20 por volume (se disponível) ou top 20 nomes
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                        # Utiliza a cópia da util_filtrada para evitar SettingWithCopyWarning
                         vol = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
                         suggestions = vol.head(20).index.tolist()
                         matches = [s for s in suggestions if s in nomes_possiveis]
                     else:
                         matches = nomes_possiveis[:20]
 
-                # Correção: Se a busca estiver em uma aba, o selectbox precisa estar DENTRO dela.
                 chosen = None
                 if matches:
                     chosen = st.selectbox("Resultados da busca — selecione o beneficiário", options=[""] + matches, index=0, key="busca_selectbox")
@@ -266,36 +261,120 @@ if st.session_state.logged_in:
                 else:
                     st.write("Nenhum resultado")
 
-                # Ao selecionar, mostrar resumo rápido dentro da aba Busca
-                if st.session_state.selected_benef:
-                    selected_benef = st.session_state.selected_benef
+                # --- INÍCIO: Seção Detalhada (Movida para dentro da aba Busca) ---
+                selected_benef = st.session_state.selected_benef 
+                if selected_benef:
                     st.markdown(f"### 🔎 Detalhes rápidos para: **{selected_benef}**")
 
+                    # Preparar dados do beneficiário
+                    util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef].copy()
+                    cad_b = cadastro_filtrado[cadastro_filtrado['Nome_do_Associado'] == selected_benef].copy()
+
+                    # Métricas rápidas
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                        util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef]
                         custo_total_b = util_b['Valor'].sum() if 'Valor' in util_b.columns else 0
                         volume_b = len(util_b)
                         st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
                         st.metric("Volume (atendimentos)", f"{volume_b}")
 
-                        # ATENÇÃO: O BLOCO DE CÓDIGO DO GRÁFICO (st.plotly_chart) FOI REMOVIDO DAQUI
-                        # E MANTIDO APENAS NO EXPANDER DE DETALHES (SEÇÃO 10) PARA EVITAR O ERRO DE ID DUPLICADO.
+                    # Expander com detalhes
+                    with st.expander(f"🔍 Dados detalhados — {selected_benef}", expanded=True):
+                        st.subheader("Informações cadastrais")
+                        if not cad_b.empty:
+                            st.dataframe(cad_b.reset_index(drop=True))
+                        else:
+                            st.write("Informações cadastrais não encontradas nos filtros aplicados.")
 
-                    else:
-                        st.write("Dados de utilização não disponíveis para filtros atuais.")
+                        st.subheader("Utilização do plano (atendimentos relacionados)")
+                        if not util_b.empty:
+                            st.dataframe(util_b.reset_index(drop=True))
+                        else:
+                            st.write("Nenhum registro de utilização encontrado para os filtros aplicados.")
+
+                        # Histórico de custos e procedimentos
+                        st.subheader("Histórico de custos e procedimentos")
+                        if 'Valor' in util_b.columns:
+                            st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
+                            
+                            # evolução do beneficiário
+                            if 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
+                                util_b.loc[:, 'Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
+                                evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
+                                evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
+                                fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
+                                st.plotly_chart(fig_b, use_container_width=True)
+                            else:
+                                st.write("Dados de data e valor insuficientes para gráfico de evolução.")
+
+
+                        if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
+                            top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(20)
+                            st.write("Principais procedimentos utilizados pelo beneficiário")
+                            st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
+
+                        # CIDs associados
+                        st.subheader("CIDs associados")
+                        if 'Codigo_do_CID' in util_b.columns:
+                            cids = util_b['Codigo_do_CID'].dropna().unique().tolist()
+                            if len(cids) > 0:
+                                st.write(", ".join(map(str, cids)))
+                            else:
+                                st.write("Nenhum CID associado encontrado.")
+                        else:
+                            st.write("Coluna 'Codigo_do_CID' não encontrada.")
+
+                        # Alertas individuais (usando limiares simples)
+                        st.subheader("Alertas individuais")
+                        alert_msgs = []
+                        if 'Valor' in util_b.columns:
+                            if custo_total_b > 5000:
+                                alert_msgs.append(f"Custo total R$ {custo_total_b:,.2f} acima de R$ 5.000 (limiar padrão).")
+                        if not util_b.empty:
+                            if len(util_b) > 50:
+                                alert_msgs.append(f"Volume de atendimentos ({len(util_b)}) maior que 50 (limiar padrão).")
+                        
+                        if alert_msgs:
+                            for a in alert_msgs:
+                                st.warning(a)
+                        else:
+                            st.write("Nenhum alerta automático para os limiares padrão.")
+
+                        # Exportar relatório individual em Excel
+                        st.subheader("Exportar relatório individual")
+                        buf_ind = BytesIO()
+                        with pd.ExcelWriter(buf_ind, engine='xlsxwriter') as writer:
+                            if not util_b.empty:
+                                util_b.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
+                            if not cad_b.empty:
+                                cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
+                            if not medicina_trabalho.empty:
+                                # Filtragem de medicina do trabalho para o beneficiário
+                                med_b = medicina_trabalho[medicina_trabalho.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
+                                if not med_b.empty:
+                                    med_b.to_excel(writer, sheet_name='Medicina_do_Trabalho_Ind', index=False)
+                            if not atestados.empty:
+                                # Filtragem de atestados para o beneficiário
+                                at_b = atestados[atestados.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
+                                if not at_b.empty:
+                                    at_b.to_excel(writer, sheet_name='Atestados_Ind', index=False)
+                        buf_ind.seek(0)
+                        st.download_button(
+                            label="📥 Exportar relatório individual (.xlsx)",
+                            data=buf_ind,
+                            file_name=f"relatorio_{normalize_name(selected_benef)[:50]}.xlsx",
+                            mime="application/vnd.ms-excel"
+                        )
+                # --- FIM: Seção Detalhada ---
 
         # ---------------------------
         # 9. Conteúdo das demais abas (KPIs, Comparativo, Alertas, Exportação, CIDs...)
         # ---------------------------
         for i, tab_name in enumerate(tabs):
-            # pular a aba Busca porque já tratada (exceto se a ordem for diferente, o que pode quebrar)
-            # A checagem if tab_name == "Busca": continue; é mais segura.
+            # pular a aba Busca
             if tab_name == "Busca":
                 continue
 
-            # Ajuste de índice: Como "Busca" está sempre incluída, a ordem da lista 'tabs' é usada.
-            # O Streamlit cria os tab_objects na ordem de 'tabs'. O 'i' já é o índice correto.
-            with tab_objects[i]: # O índice i aponta para o objeto da aba
+            with tab_objects[i]:
                 if tab_name == "KPIs Gerais":
                     st.subheader("📌 KPIs Gerais")
                     custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0
@@ -376,7 +455,6 @@ if st.session_state.logged_in:
                         else:
                             utilizacao_merge[sexo_col] = utilizacao_merge[sexo_col].fillna('Desconhecido')
                         
-                        # Inconsistência de exemplo: CID de parto (O80) em homens ('M')
                         parto_masc = utilizacao_merge[(utilizacao_merge['Codigo_do_CID']=='O80') & (utilizacao_merge[sexo_col]=='M')]
                         if not parto_masc.empty:
                             inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns='Nome_merge')])
@@ -402,9 +480,8 @@ if st.session_state.logged_in:
 
                 elif tab_name == "CIDs Crônicos & Procedimentos":
                     st.subheader("🏥 Beneficiários Crônicos")
-                    cids_cronicos = ['E11','I10','J45'] # Exemplo: Diabetes, Hipertensão, Asma
+                    cids_cronicos = ['E11','I10','J45'] 
                     if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                        # Usar .loc para evitar SettingWithCopyWarning
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].isin(cids_cronicos)
                         beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
@@ -417,104 +494,6 @@ if st.session_state.logged_in:
                     else:
                         st.info("Colunas de CID ou Procedimento/Valor não encontradas para esta análise.")
 
-
         # ---------------------------
-        # 10. Exibição detalhada do beneficiário selecionado (expander/modal) + export individual
+        # A SEÇÃO 10 ORIGINAL FOI REMOVIDA DAQUI
         # ---------------------------
-        selected_benef = st.session_state.selected_benef # pegar seleção persistente
-        if selected_benef:
-            # Usar .copy() para garantir que operações no util_b e cad_b não afetem o dataframe original
-            util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef].copy()
-            cad_b = cadastro_filtrado[cadastro_filtrado['Nome_do_Associado'] == selected_benef].copy()
-
-            # Expander com detalhes
-            with st.expander(f"🔍 Dados detalhados — {selected_benef}", expanded=True):
-                st.subheader("Informações cadastrais")
-                if not cad_b.empty:
-                    st.dataframe(cad_b.reset_index(drop=True))
-                else:
-                    st.write("Informações cadastrais não encontradas nos filtros aplicados.")
-
-                st.subheader("Utilização do plano (atendimentos relacionados)")
-                if not util_b.empty:
-                    st.dataframe(util_b.reset_index(drop=True))
-                else:
-                    st.write("Nenhum registro de utilização encontrado para os filtros aplicados.")
-
-                # Histórico de custos e procedimentos
-                st.subheader("Histórico de custos e procedimentos")
-                if 'Valor' in util_b.columns:
-                    custo_total_b = util_b['Valor'].sum()
-                    st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
-                    
-                    # evolução do beneficiário (ORIGEM DO ERRO CORRIGIDA: APENAS UM PLOTLY_CHART AQUI)
-                    if 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
-                        # Usar .loc para evitar SettingWithCopyWarning
-                        util_b.loc[:, 'Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
-                        evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
-                        evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
-                        fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
-                        st.plotly_chart(fig_b, use_container_width=True)
-                    else:
-                        st.write("Dados de data e valor insuficientes para gráfico de evolução.")
-
-
-                if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
-                    top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(20)
-                    st.write("Principais procedimentos utilizados pelo beneficiário")
-                    st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
-
-                # CIDs associados
-                st.subheader("CIDs associados")
-                if 'Codigo_do_CID' in util_b.columns:
-                    cids = util_b['Codigo_do_CID'].dropna().unique().tolist()
-                    if len(cids) > 0:
-                        st.write(", ".join(map(str, cids)))
-                    else:
-                        st.write("Nenhum CID associado encontrado.")
-                else:
-                    st.write("Coluna 'Codigo_do_CID' não encontrada.")
-
-                # Alertas individuais (usando limiares simples)
-                st.subheader("Alertas individuais")
-                alert_msgs = []
-                if 'Valor' in util_b.columns:
-                    if custo_total_b > 5000:
-                        alert_msgs.append(f"Custo total R$ {custo_total_b:,.2f} acima de R$ 5.000 (limiar padrão).")
-                if not util_b.empty:
-                    if len(util_b) > 50:
-                        alert_msgs.append(f"Volume de atendimentos ({len(util_b)}) maior que 50 (limiar padrão).")
-                
-                if alert_msgs:
-                    for a in alert_msgs:
-                        st.warning(a)
-                else:
-                    st.write("Nenhum alerta automático para os limiares padrão.")
-
-                # Exportar relatório individual em Excel
-                st.subheader("Exportar relatório individual")
-                buf_ind = BytesIO()
-                with pd.ExcelWriter(buf_ind, engine='xlsxwriter') as writer:
-                    if not util_b.empty:
-                        util_b.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
-                    if not cad_b.empty:
-                        cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
-                    if not medicina_trabalho.empty:
-                        # Filtragem de medicina do trabalho para o beneficiário
-                        med_b = medicina_trabalho[medicina_trabalho.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
-                        if not med_b.empty:
-                            med_b.to_excel(writer, sheet_name='Medicina_do_Trabalho_Ind', index=False)
-                    if not atestados.empty:
-                        # Filtragem de atestados para o beneficiário
-                        at_b = atestados[atestados.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
-                        if not at_b.empty:
-                            at_b.to_excel(writer, sheet_name='Atestados_Ind', index=False)
-                buf_ind.seek(0)
-                st.download_button(
-                    label="📥 Exportar relatório individual (.xlsx)",
-                    data=buf_ind,
-                    file_name=f"relatorio_{normalize_name(selected_benef)[:50]}.xlsx",
-                    mime="application/vnd.ms-excel"
-                )
-
-    # Fim do processamento do arquivo
