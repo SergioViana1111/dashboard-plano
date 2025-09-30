@@ -51,17 +51,27 @@ def style_dataframe_brl(df, value_cols=['Valor']):
 # ---------------------------
 # 0. Autenticação segura
 # ---------------------------
+import streamlit as st
+
 # Configuração inicial do Streamlit
 st.set_page_config(layout="wide")
 
+# Inicializa variáveis de sessão relacionadas ao login
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "username" not in st.session_state:
     st.session_state.username = ""
+if "role" not in st.session_state:
     st.session_state.role = ""
 
-# garantir key para seleção persistente do beneficiário
+# Inicializa variável de seleção de beneficiário
 if "selected_benef" not in st.session_state:
     st.session_state.selected_benef = None
+
+# Inicializa variável do arquivo enviado para evitar NameError
+if "uploaded_file" not in st.session_state:
+    st.session_state.uploaded_file = None
+
 
 def login():
     st.sidebar.subheader("🔐 Login")
