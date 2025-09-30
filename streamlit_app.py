@@ -1,4 +1,4 @@
-import pandas as pd 
+import pandas as pd
 import numpy as np
 from unidecode import unidecode
 import streamlit as st
@@ -72,10 +72,10 @@ def login():
     
     st.sidebar.subheader("🔐 Login")
     st.session_state.username_input = st.sidebar.text_input(
-        "Usuário", st.session_state.username_input
+        "Usuário", st.session_state.username_input, key="user_login_input" # Adiciona key
     )
     st.session_state.password_input = st.sidebar.text_input(
-        "Senha", st.session_state.password_input, type="password"
+        "Senha", st.session_state.password_input, type="password", key="password_login_input" # Adiciona key
     )
     
     # Simulação de st.secrets para rodar localmente se não estiver no Streamlit Cloud
@@ -99,17 +99,19 @@ def login():
                 st.session_state.role = roles[idx]
                 st.success(f"Bem-vindo(a), {st.session_state.username}!")
                 
-                # CORREÇÃO DEFINITIVA: 
-                # Use st.components.v1.html para forçar a recarga limpa da página via JavaScript.
-                # Isso impede o erro de 'AttributeError' que ocorre durante o st.experimental_rerun().
-                import streamlit.components.v1 as components
+                # CORREÇÃO DE LOGIN:
+                # Usa st.components.v1.html para forçar a recarga limpa da página via JavaScript.
+                # Isso resolve problemas de estado (AttributeError) que podem ocorrer
+                # ao tentar renderizar o dashboard imediatamente após o sucesso no login.
+                components = streamlit.components.v1
                 components.html(
                     """<script>
+                        // Recarrega a página no iframe pai (o ambiente do Streamlit)
                         window.parent.location.reload();
                     </script>""",
                     height=0
                 )
-                return # Garante que nada mais no Streamlit seja executado.
+                return # Garante que nada mais no Streamlit seja executado até a recarga.
             else:
                 st.error("Senha incorreta")
         else:
@@ -179,10 +181,10 @@ if st.session_state.logged_in:
                 if utilizacao['Valor'].dtype == 'object' or utilizacao['Valor'].dtype == np.dtype('object'):
                     # Tenta tratar o cenário 1: Padrão Americano (ponto decimal) com vírgula de milhar. Ex: '58,146.17'
                     utilizacao.loc[:, 'Valor'] = (utilizacao['Valor']
-                                                  .astype(str)
-                                                  .str.replace(r'[^\d\.\,]', '', regex=True) # Remove tudo que não for digito, ponto ou vírgula
-                                                  .str.replace(',', '', regex=False) # Remove vírgula de milhar
-                                                 )
+                                                     .astype(str)
+                                                     .str.replace(r'[^\d\.\,]', '', regex=True) # Remove tudo que não for digito, ponto ou vírgula
+                                                     .str.replace(',', '', regex=False) # Remove vírgula de milhar
+                                                    )
                     # O resultado agora deve ser '58146.17' (ponto decimal). Converte para float.
                 
                 # Para evitar problemas de SettingWithCopyWarning
@@ -292,8 +294,8 @@ if st.session_state.logged_in:
             export_index = tabs.index("Exportação")
             tabs.insert(export_index, "Busca")
         elif role == "MEDICO":
-              # Adiciona Busca para o Médico também
-              tabs.append("Busca")
+             # Adiciona Busca para o Médico também
+             tabs.append("Busca")
 
         tab_objects = st.tabs(tabs)
         
@@ -326,13 +328,26 @@ if st.session_state.logged_in:
 
                 chosen = None
                 if matches:
-                    chosen = st.selectbox("Resultados da busca — selecione o beneficiário", options=[""] + matches, index=0, key="busca_selectbox")
+                    # Tenta manter a seleção anterior, se ainda estiver nos matches
+                    current_selection = st.session_state.get('selected_benef', "")
+                    default_index = 0
+                    if current_selection and current_selection in matches:
+                        default_index = matches.index(current_selection) + 1 # +1 por causa do item vazio
+                    
+                    chosen = st.selectbox(
+                        "Resultados da busca — selecione o beneficiário", 
+                        options=[""] + matches, 
+                        index=default_index if default_index > 0 else 0, # Garante que o index 0 seja o vazio se não houver seleção prévia
+                        key="busca_selectbox"
+                    )
+                    
                     if chosen == "":
                         st.session_state.selected_benef = None
                     else:
                         st.session_state.selected_benef = chosen
                 else:
                     st.write("Nenhum resultado")
+                    st.session_state.selected_benef = None # Limpa a seleção se não houver matches
 
                 # --- INÍCIO: Seção Detalhada (Movida para dentro da aba Busca) ---
                 selected_benef = st.session_state.selected_benef 
@@ -371,12 +386,15 @@ if st.session_state.logged_in:
                         st.subheader("Histórico de custos e procedimentos")
                         if 'Valor' in util_b.columns:
                             # APLICA FORMAT_BRL AQUI
-                            st.metric("Custo total (filtros atuais)", format_brl(custo_total_b))
+                            # (Esta métrica já foi mostrada acima, mas mantida para consistência com o código original)
+                            # st.metric("Custo total (filtros atuais)", format_brl(custo_total_b)) 
                             
                             # evolução do beneficiário
                             if 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
-                                util_b.loc[:, 'Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
-                                evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
+                                # Para evitar SettingWithCopyWarning
+                                util_b_temp = util_b.copy()
+                                util_b_temp.loc[:, 'Mes_Ano'] = util_b_temp['Data_do_Atendimento'].dt.to_period('M')
+                                evol_b = util_b_temp.groupby('Mes_Ano')['Valor'].sum().reset_index()
                                 evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
                                 fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
                                 # Formatação de eixo para BR
@@ -392,11 +410,12 @@ if st.session_state.logged_in:
                                 st.write("Principais procedimentos utilizados pelo beneficiário")
                                 
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
-                                if 'Valor' in top_proc_b.index.name: # Checa se a série é o Valor
+                                if top_proc_b.index.name == 'Nome_do_Procedimento': # Checa se a série é o Valor
                                     df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                                     # USANDO A NOVA FUNÇÃO style_dataframe_brl
                                     st.dataframe(style_dataframe_brl(df_top_proc))
                                 else:
+                                    # Caso a coluna de valor não seja 'Valor' (improvável aqui, mas para segurança)
                                     st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
 
                         # CIDs associados
@@ -419,16 +438,19 @@ if st.session_state.logged_in:
                                 util_b.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
                             if not cad_b.empty:
                                 cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
-                            if not medicina_trabalho.empty:
-                                # Filtragem de medicina do trabalho para o beneficiário
-                                med_b = medicina_trabalho[medicina_trabalho.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
+                            
+                            # Filtragem e exportação de Medicina do Trabalho
+                            if not medicina_trabalho.empty and 'Nome_do_Associado' in medicina_trabalho.columns:
+                                med_b = medicina_trabalho[medicina_trabalho['Nome_do_Associado'].fillna('') == selected_benef]
                                 if not med_b.empty:
                                     med_b.to_excel(writer, sheet_name='Medicina_do_Trabalho_Ind', index=False)
-                            if not atestados.empty:
-                                # Filtragem de atestados para o beneficiário
-                                at_b = atestados[atestados.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
+                            
+                            # Filtragem e exportação de Atestados
+                            if not atestados.empty and 'Nome_do_Associado' in atestados.columns:
+                                at_b = atestados[atestados['Nome_do_Associado'].fillna('') == selected_benef]
                                 if not at_b.empty:
                                     at_b.to_excel(writer, sheet_name='Atestados_Ind', index=False)
+                                    
                         buf_ind.seek(0)
                         st.download_button(
                             label="📥 Exportar relatório individual (.xlsx)",
@@ -547,6 +569,7 @@ if st.session_state.logged_in:
                         else:
                             utilizacao_merge[sexo_col] = utilizacao_merge[sexo_col].fillna('Desconhecido')
                         
+                        # Exemplo de inconsistência: Parto (CID O80) em homens
                         parto_masc = utilizacao_merge[(utilizacao_merge['Codigo_do_CID']=='O80') & (utilizacao_merge[sexo_col]=='M')]
                         if not parto_masc.empty:
                             inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns='Nome_merge')])
@@ -575,20 +598,47 @@ if st.session_state.logged_in:
 
                 elif tab_name == "CIDs Crônicos & Procedimentos":
                     st.subheader("🏥 Beneficiários Crônicos")
-                    cids_cronicos = ['E11','I10','J45'] 
-                    if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                    # CIDs crônicos de exemplo (Diabetes, Hipertensão)
+                    cids_cronicos = ['E11','I10'] 
+                    
+                    if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Nome_do_Associado' in utilizacao_filtrada.columns:
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
-                        utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].isin(cids_cronicos)
-                        beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                        df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'})
-                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
-                        st.dataframe(style_dataframe_brl(df_cronicos))
+                        cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Codigo_do_CID'].isin(cids_cronicos)]
+                        
+                        if not cronicos.empty:
+                            
+                            # Lista de beneficiários crônicos (únicos)
+                            beneficiarios_cronicos = cronicos['Nome_do_Associado'].unique()
+                            st.info(f"Foram identificados **{len(beneficiarios_cronicos)}** beneficiários com CIDs Crônicos ({', '.join(cids_cronicos)}) nos filtros atuais.")
 
-                    st.subheader("💊 Top Procedimentos")
-                    if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                        top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                        df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
-                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
-                        st.dataframe(style_dataframe_brl(df_top_proc))
+                            # Tabela de custo total por beneficiário crônico
+                            custo_cronicos = cronicos.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado', 'Valor':'Custo Total'})
+                            st.write("**Custo Total por Beneficiário Crônico:**")
+                            # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                            st.dataframe(style_dataframe_brl(custo_cronicos, value_cols=['Custo Total']))
+                            
+                            # Principais CIDs entre eles
+                            cids_comuns = cronicos.groupby('Codigo_do_CID').size().sort_values(ascending=False).reset_index(name='Frequência').rename(columns={'Codigo_do_CID':'CID'})
+                            st.write("**Frequência dos CIDs Crônicos:**")
+                            st.dataframe(cids_comuns)
+
+                        else:
+                            st.write("Nenhum registro de CIDs crônicos (E11, I10) encontrado nos filtros aplicados.")
                     else:
-                        st.info("Colunas de CID ou Procedimento/Valor não encontradas para esta análise.")
+                        st.write("Colunas 'Codigo_do_CID' ou 'Nome_do_Associado' não encontradas.")
+                    
+                    st.subheader("Detalhes de Procedimentos (Médicos)")
+                    # Filtro e visualização de procedimentos de alto custo para o médico
+                    if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                        top_proc_geral = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(15).reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                        st.write("**Top 15 Procedimentos por Custo (Geral):**")
+                        st.dataframe(style_dataframe_brl(top_proc_geral))
+                    else:
+                        st.write("Colunas de procedimentos ou valor não encontradas.")
+
+
+# Tratamento caso o arquivo não tenha sido carregado
+if st.session_state.logged_in and uploaded_file is None:
+    st.info("Aguardando o upload do arquivo .xltx para carregar o dashboard.")
+elif not st.session_state.logged_in:
+     st.info("Faça o login na barra lateral para acessar o dashboard.")
