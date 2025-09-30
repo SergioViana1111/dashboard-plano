@@ -94,8 +94,8 @@ else:
             f"<div style='text-align:right;color:#667eea;font-weight:600'>{role}<br>{st.session_state.username}</div>", 
             unsafe_allow_html=True
         )
-else:
-    st.info("Por favor, faça login no menu lateral.")
+    else:
+        st.info("Por favor, faça login no menu lateral.")
 
 
     # ---------------------------
