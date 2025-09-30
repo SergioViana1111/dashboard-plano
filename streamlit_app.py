@@ -47,26 +47,41 @@ def normalize_name(s):
     return unidecode(str(s)).strip().upper()
 
 # ---------------------------
-# 2. AUTENTICAÇÃO
+# AUTENTICAÇÃO
 # ---------------------------
-if "logged_in" not in st.session_state: st.session_state.logged_in=False; st.session_state.username=""; st.session_state.role=""
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
+
 def login():
     st.sidebar.markdown("### 🔐 Login")
-    username=st.sidebar.text_input("Usuário")
-    password=st.sidebar.text_input("Senha", type="password")
+    username = st.sidebar.text_input("Usuário")
+    password = st.sidebar.text_input("Senha", type="password")
+
     if st.sidebar.button("Entrar", use_container_width=True):
-        credentials={"usernames":["rh_teste","medico_teste"],"passwords":["senha_rh","senha_med"],"roles":["RH","MEDICO"]}
-        if username in credentials["usernames"]:
-            idx=credentials["usernames"].index(username)
-            if password==credentials["passwords"][idx]:
-                st.session_state.logged_in=True
-                st.session_state.username=username
-                st.session_state.role=credentials["roles"][idx]
+        # Definindo credenciais corretas
+        credentials = {
+            "usuarios": ["rh_teste", "medico_teste"],
+            "senhas": ["senha_rh", "senha_med"],
+            "roles": ["RH", "MEDICO"]
+        }
+
+        # Verifica se o usuário existe
+        if username in credentials["usuarios"]:
+            idx = credentials["usuarios"].index(username)
+            if password == credentials["senhas"][idx]:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = credentials["roles"][idx]
                 st.success(f"✅ Bem-vindo(a), {username}!")
                 st.experimental_rerun()
-            else: st.error("❌ Senha incorreta")
-        else: st.error("❌ Usuário não encontrado")
+            else:
+                st.error("❌ Senha incorreta")
+        else:
+            st.error("❌ Usuário não encontrado")
 
+# Chama o login se não estiver logado
 if not st.session_state.logged_in:
     login()
 else:
