@@ -70,7 +70,7 @@ def login():
                 st.session_state.username = username
                 st.session_state.role = roles[idx]
                 st.success(f"✅ Bem-vindo(a), {username}!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Senha incorreta")
         else:
