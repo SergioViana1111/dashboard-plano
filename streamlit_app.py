@@ -5,6 +5,7 @@ import streamlit as st
 import plotly.express as px
 from io import BytesIO
 import re # Módulo de expressões regulares para limpeza mais robusta
+import streamlit.components.v1
 
 # ---------------------------
 # 0. FUNÇÃO DE FORMATAÇÃO BRASILEIRA (AJUSTADA)
@@ -98,10 +99,17 @@ def login():
                 st.session_state.role = roles[idx]
                 st.success(f"Bem-vindo(a), {st.session_state.username}!")
                 
-                # CORREÇÃO: Usamos 'return' para parar a execução e garantir que o 
-                # st.experimental_rerun() seja a última coisa a acontecer.
-                st.experimental_rerun() 
-                return # Garante que o script reinicia com o novo estado de sessão
+                # CORREÇÃO DEFINITIVA: 
+                # Use st.components.v1.html para forçar a recarga limpa da página via JavaScript.
+                # Isso impede o erro de 'AttributeError' que ocorre durante o st.experimental_rerun().
+                import streamlit.components.v1 as components
+                components.html(
+                    """<script>
+                        window.parent.location.reload();
+                    </script>""",
+                    height=0
+                )
+                return # Garante que nada mais no Streamlit seja executado.
             else:
                 st.error("Senha incorreta")
         else:
