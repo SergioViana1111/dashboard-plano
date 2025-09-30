@@ -4,6 +4,7 @@ from unidecode import unidecode
 import streamlit as st
 import plotly.express as px
 from io import BytesIO
+import re # Módulo de expressões regulares para limpeza mais robusta
 
 # ---------------------------
 # 0. FUNÇÃO DE FORMATAÇÃO BRASILEIRA (AJUSTADA)
@@ -16,6 +17,35 @@ def format_brl(value):
     value = float(value) 
     # Formata para string BR: ponto para milhar, vírgula para decimal
     return "R$ {:,.2f}".format(value).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
+
+# NOVA FUNÇÃO: Formata o DataFrame inteiro com o padrão BR
+def style_dataframe_brl(df, value_cols=['Valor']):
+    """Aplica formatação monetária BR em colunas específicas de um DataFrame.
+    Retorna um Styler para uso no st.dataframe."""
+    
+    formatters = {}
+    
+    # 1. Colunas de Valor (R$ 1.234,56)
+    for col in value_cols:
+        if col in df.columns:
+            # Usamos a função format_brl como formatter
+            formatters[col] = format_brl
+    
+    # 2. Colunas de Volume (1.234) - Se houver colunas '0' ou 'Volume' não monetárias
+    # Verifica a coluna 'Volume' se existir
+    if 'Volume' in df.columns and 'Volume' not in formatters:
+        # Formato de número inteiro com separador de milhar BR (ponto)
+        formatters['Volume'] = lambda x: '{:,.0f}'.format(x).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
+        
+    # Verifica a coluna '0' (comum em count/size()) se existir
+    if 0 in df.columns and 0 not in formatters:
+        formatters[0] = lambda x: '{:,.0f}'.format(x).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
+
+    # Aplica o estilo
+    if formatters:
+        return df.style.format(formatters)
+    return df
+
 
 # ---------------------------
 # 0. Autenticação segura
@@ -132,21 +162,17 @@ if st.session_state.logged_in:
                 atestados[col] = pd.to_datetime(atestados[col], errors='coerce')
 
         # CONVERSÃO DE VALORES DE AMERICANO PARA FLOAT:
-        # Verifica se 'Valor' existe e se é do tipo string/object (indicando que foi lido com formatação americana)
         if 'Valor' in utilizacao.columns:
             try:
-                # O parâmetro 'decimal='.' e 'thousands=',' assume o formato americano no Excel/CSV e converte para float
-                # Embora o read_excel lide com isso, é mais seguro garantir a conversão aqui, especialmente se o Pandas
-                # leu a coluna como 'object' (string).
+                # Tenta limpar e converter se for string (Remove R$, espaços e vírgulas de milhar, deixando apenas o ponto decimal)
                 if utilizacao['Valor'].dtype == 'object' or utilizacao['Valor'].dtype == np.dtype('object'):
-                    # Tenta limpar e converter se for string (Ex: 'R$ 5,000.00' ou '5,000.00')
-                    utilizacao['Valor'] = utilizacao['Valor'].astype(str).str.replace('R$', '', regex=False).str.replace(' ', '', regex=False).str.replace(',', '', regex=False)
-                    utilizacao['Valor'] = pd.to_numeric(utilizacao['Valor'], errors='coerce')
-                
-                # Se a coluna de custo estava com ponto como separador de milhar (e não decimal),
-                # a leitura direta pode ter funcionado, mas se o ponto veio como separador de milhar e a vírgula como decimal
-                # (o que é improvável em arquivos americanos puros), a abordagem acima corrige o ponto como milhar.
-                # A chave aqui é garantir que a coluna seja um float.
+                    # Tenta tratar o cenário 1: Padrão Americano (ponto decimal) com vírgula de milhar. Ex: '58,146.17'
+                    utilizacao.loc[:, 'Valor'] = (utilizacao['Valor']
+                                                  .astype(str)
+                                                  .str.replace(r'[^\d\.\,]', '', regex=True) # Remove tudo que não for digito, ponto ou vírgula
+                                                  .str.replace(',', '', regex=False) # Remove vírgula de milhar
+                                                 )
+                    # O resultado agora deve ser '58146.17' (ponto decimal). Converte para float.
                 
                 # Para evitar problemas de SettingWithCopyWarning
                 utilizacao.loc[:, 'Valor'] = pd.to_numeric(utilizacao['Valor'], errors='coerce')
@@ -325,12 +351,8 @@ if st.session_state.logged_in:
                         st.subheader("Utilização do plano (atendimentos relacionados)")
                         if not util_b.empty:
                             # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
-                            if 'Valor' in util_b.columns:
-                                # Usando st.dataframe com column_config para garantir a formatação (Streamlit >= 1.25.0)
-                                column_config = {"Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")}
-                                st.dataframe(util_b.reset_index(drop=True), column_config=column_config)
-                            else:
-                                st.dataframe(util_b.reset_index(drop=True))
+                            # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                            st.dataframe(style_dataframe_brl(util_b.reset_index(drop=True)))
                         else:
                             st.write("Nenhum registro de utilização encontrado para os filtros aplicados.")
 
@@ -361,8 +383,8 @@ if st.session_state.logged_in:
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
                                 if 'Valor' in top_proc_b.index.name: # Checa se a série é o Valor
                                     df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
-                                    column_config = {"Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")}
-                                    st.dataframe(df_top_proc, column_config=column_config)
+                                    # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                                    st.dataframe(style_dataframe_brl(df_top_proc))
                                 else:
                                     st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
 
@@ -408,9 +430,6 @@ if st.session_state.logged_in:
         # ---------------------------
         # 9. Conteúdo das demais abas (KPIs, Comparativo, Alertas, Exportação, CIDs...)
         # ---------------------------
-        # Define a formatação para os DataFrames
-        column_config_valor = {"Valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")}
-        column_config_volume = {0: st.column_config.NumberColumn("Volume")}
 
         for i, tab_name in enumerate(tabs):
             # pular a aba Busca
@@ -427,16 +446,16 @@ if st.session_state.logged_in:
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
                         top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
+                        
                         st.write("**Top 10 Beneficiários por Custo**")
-                        st.dataframe(
-                            custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}),
-                            column_config=column_config_valor
-                        )
+                        df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'})
+                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                        st.dataframe(style_dataframe_brl(df_custo))
+                        
                         st.write("**Top 10 Beneficiários por Volume**")
-                        st.dataframe(
-                            top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}),
-                            column_config=column_config_volume # O volume não é monetário
-                        )
+                        df_volume = top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'})
+                        # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
+                        st.dataframe(style_dataframe_brl(df_volume, value_cols=[]))
 
                     if 'Data_do_Atendimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         # Para evitar SettingWithCopyWarning
@@ -485,16 +504,15 @@ if st.session_state.logged_in:
 
                         if not alert_custo.empty:
                             st.write("**Beneficiários acima do limite de custo:**")
-                            st.dataframe(
-                                alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}),
-                                column_config=column_config_valor
-                            )
+                            df_alert_custo = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'})
+                            # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                            st.dataframe(style_dataframe_brl(df_alert_custo))
+                            
                         if not alert_vol.empty:
                             st.write("**Beneficiários acima do limite de volume:**")
-                            st.dataframe(
-                                alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'}),
-                                column_config=column_config_volume
-                            )
+                            df_alert_vol = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado',0:'Volume'})
+                            # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
+                            st.dataframe(style_dataframe_brl(df_alert_vol, value_cols=[]))
 
                     st.subheader("⚠️ Inconsistências")
                     inconsistencias = pd.DataFrame()
@@ -524,7 +542,8 @@ if st.session_state.logged_in:
                             
                     if not inconsistencias.empty:
                         # Aplicar formatação para a coluna 'Valor' nas inconsistências
-                        st.dataframe(inconsistencias, column_config=column_config_valor)
+                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                        st.dataframe(style_dataframe_brl(inconsistencias))
                     else:
                         st.write("Nenhuma inconsistência encontrada.")
 
@@ -532,8 +551,7 @@ if st.session_state.logged_in:
                     st.subheader("📤 Exportar Relatório")
                     buffer = BytesIO()
                     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                        # Para exportar, é melhor que os dados voltem ao formato numérico puro,
-                        # que é o caso da 'utilizacao_filtrada' após a correção da Seção 4.
+                        # Para exportar, é melhor que os dados voltem ao formato numérico puro
                         utilizacao_filtrada.to_excel(writer, sheet_name='Utilizacao', index=False)
                         cadastro_filtrado.to_excel(writer, sheet_name='Cadastro', index=False)
                         if not medicina_trabalho.empty:
@@ -551,17 +569,15 @@ if st.session_state.logged_in:
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].isin(cids_cronicos)
                         beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                        st.dataframe(
-                            beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'}),
-                            column_config=column_config_valor
-                        )
+                        df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Nome do Associado','Valor':'Valor'})
+                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                        st.dataframe(style_dataframe_brl(df_cronicos))
 
                     st.subheader("💊 Top Procedimentos")
                     if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                        st.dataframe(
-                            top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}),
-                            column_config=column_config_valor
-                        )
+                        df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                        # USANDO A NOVA FUNÇÃO style_dataframe_brl
+                        st.dataframe(style_dataframe_brl(df_top_proc))
                     else:
                         st.info("Colunas de CID ou Procedimento/Valor não encontradas para esta análise.")
