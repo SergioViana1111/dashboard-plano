@@ -475,17 +475,17 @@ if st.session_state.logged_in:
                     st.write("Coluna 'Codigo_do_CID' não encontrada.")
 
                 # Alertas individuais (usando limiares simples)
-                st.subheader("Alertas individuais")
-                alert_msgs = []
-                if 'Valor' in util_b.columns:
-                    if custo_total_b > 5000:
-                        alert_msgs.append(f"Custo total R$ {custo_total_b:,.2f} acima de R$ 5.000 (limiar padrão).")
-                if len(util_b) > 50:
-                    alert_msgs.append(f"Volume de atendimentos ({len(util_b)}) maior que 50 (limiar padrão).")
-                if alert_msgs:
-                    for a in alert_msgs:
-                        st.warning(a)
-                else:
+                #st.subheader("Alertas individuais")
+                #alert_msgs = []
+                #if 'Valor' in util_b.columns:
+                #    if custo_total_b > 5000:
+                #        alert_msgs.append(f"Custo total R$ {custo_total_b:,.2f} acima de R$ 5.000 (limiar padrão).")
+                #if len(util_b) > 50:
+                #    alert_msgs.append(f"Volume de atendimentos ({len(util_b)}) maior que 50 (limiar padrão).")
+                #if alert_msgs:
+                #    for a in alert_msgs:
+                #        st.warning(a)
+                #else:
                     st.write("Nenhum alerta automático para os limiares padrão.")
 
                 # Exportar relatório individual em Excel
