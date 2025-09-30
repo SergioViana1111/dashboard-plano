@@ -251,21 +251,24 @@ if st.session_state.logged_in:
                 if st.session_state.selected_benef:
                     selected_benef = st.session_state.selected_benef
                     st.markdown(f"### 🔎 Detalhes rápidos para: **{selected_benef}**")
-
+                
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                        util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef]
+                        util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef].copy()
                         custo_total_b = util_b['Valor'].sum() if 'Valor' in util_b.columns else 0
                         volume_b = len(util_b)
-                        st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
-                        st.metric("Volume (atendimentos)", f"{volume_b}")
-
-                        # pequena visualização da evolução
+                
+                        # key única baseada no nome (normalize_name já definida no código)
+                        key_base = normalize_name(selected_benef)
+                        st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}", key=f"metric_custo_busca_{key_base}")
+                        st.metric("Volume (atendimentos)", f"{volume_b}", key=f"metric_vol_busca_{key_base}")
+                
+                        # pequena visualização da evolução (com key único)
                         if 'Valor' in util_b.columns and 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
                             util_b['Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
                             evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
                             evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
                             fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
-                            st.plotly_chart(fig_b, use_container_width=True)
+                            st.plotly_chart(fig_b, use_container_width=True, key=f"fig_busca_{key_base}")
                     else:
                         st.write("Dados de utilização não disponíveis para filtros atuais.")
 
@@ -405,21 +408,20 @@ if st.session_state.logged_in:
                     st.write("Nenhum registro de utilização encontrado para os filtros aplicados.")
 
                 # Histórico de custos e procedimentos
-                st.subheader("Histórico de custos e procedimentos")
                 if 'Valor' in util_b.columns:
                     custo_total_b = util_b['Valor'].sum()
-                    st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
-                    # evolução do beneficiário
-                    if 'Data_do_Atendimento' in util_b.columns:
+                    # usar key diferente da aba Busca para evitar duplicação
+                    key_base = normalize_name(selected_benef)
+                    st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}", key=f"metric_custo_detail_{key_base}")
+                
+                    # evolução do beneficiário (key diferente)
+                    if 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
                         util_b['Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
                         evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
                         evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
                         fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
-                        st.plotly_chart(fig_b, use_container_width=True)
-                if 'Nome_do_Procedimento' in util_b.columns:
-                    top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(20)
-                    st.write("Principais procedimentos utilizados pelo beneficiário")
-                    st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
+                        st.plotly_chart(fig_b, use_container_width=True, key=f"fig_detail_{key_base}")
+
 
                 # CIDs associados
                 st.subheader("CIDs associados")
