@@ -509,11 +509,17 @@ if st.session_state.logged_in:
                     num_beneficiarios = utilizacao_filtrada['Nome_do_Associado'].nunique() if 'Nome_do_Associado' in utilizacao_filtrada.columns else 0
                     custo_medio = custo_total / num_beneficiarios if num_beneficiarios > 0 else 0
 
-                    col1, col2, col3, col4 = st.columns(4)
+                    # ALTERAÇÃO SOLICITADA: 2 COLUNAS POR LINHA
+                    
+                    # PRIMEIRA LINHA: Custo Total e Atendimentos
+                    col1, col2 = st.columns(2)
                     with col1:
                         st.metric("💰 Custo Total", format_brl(custo_total))
                     with col2:
                         st.metric("📋 Atendimentos", f"{volume_total:,.0f}".replace(",", "."))
+                    
+                    # SEGUNDA LINHA: Beneficiários e Custo Médio
+                    col3, col4 = st.columns(2)
                     with col3:
                         st.metric("👥 Beneficiários", f"{num_beneficiarios:,.0f}".replace(",", "."))
                     with col4:
@@ -553,16 +559,16 @@ if st.session_state.logged_in:
                         st.plotly_chart(fig, use_container_width=True)
 
                     # Top 10 beneficiários
-                    col1, col2 = st.columns(2)
+                    col1_top, col2_top = st.columns(2)
                     
-                    with col1:
+                    with col1_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                             st.markdown("### 💎 Top 10 por Custo")
                             custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
                             df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                             st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400)
                             
-                    with col2:
+                    with col2_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns:
                             st.markdown("### 📊 Top 10 por Volume")
                             top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
@@ -698,6 +704,7 @@ if st.session_state.logged_in:
                 # --- ABA: ANÁLISE MÉDICA (MEDICO) ---
                 elif tab_name == "🏥 Análise Médica":
                     st.markdown("### 🧬 Beneficiários com Condições Crônicas")
+                    # Adaptação para o novo nome da aba: "Análise Médica"
                     cids_cronicos = ['E11','I10','J45'] # Diabetes, Hipertensão, Asma
                     if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
