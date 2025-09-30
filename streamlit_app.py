@@ -1,5 +1,3 @@
-para o codigo abaixo, remova a busca por beneficiario e resultado da busca do sidebar e jogue tanto a busca qto o resultado pra uma nova aba chamada "busca" antes da aba de exportacao:
-
 import pandas as pd 
 import numpy as np
 from unidecode import unidecode
