@@ -98,7 +98,7 @@ def login():
                 st.session_state.role = roles[idx]
                 st.success(f"Bem-vindo(a), {st.session_state.username}!")
                 # Força o refresh da página para carregar o dashboard
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Senha incorreta")
         else:
