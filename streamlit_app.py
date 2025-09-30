@@ -1,4 +1,4 @@
-import pandas as pd 
+import pandas as pd
 import numpy as np
 from unidecode import unidecode
 import streamlit as st
@@ -12,6 +12,10 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.role = ""
+
+# Inicializa o session state para a busca de beneficiário (agora movida para a aba "Busca")
+if 'search_query' not in st.session_state: st.session_state.search_query = ""
+if 'selected_benef' not in st.session_state: st.session_state.selected_benef = None
 
 
 def login():
@@ -149,12 +153,10 @@ if st.session_state.logged_in:
         periodo = st.sidebar.date_input("Período", [periodo_min, periodo_max])
 
         # ---------------------------
-        # 6.1 Busca por Nome do Beneficiário (sidebar + topo)
+        # 6.1 Busca por Nome do Beneficiário (Movido para a aba "Busca")
         # ---------------------------
-        st.sidebar.subheader("🔎 Busca por Beneficiário")
-        search_input_sidebar = st.sidebar.text_input("Digite nome do beneficiário (busca em tempo real)", "")
-        # Também no topo
-        search_input_top = st.text_input("🔎 Buscar beneficiário (topo) — digite e selecione abaixo", search_input_sidebar)
+        # A lógica de input de texto e selectbox foi movida para a aba "Busca"
+        # O input de texto no topo e o sidebar foram removidos.
 
         # Normalize helper
         def normalize_name(s):
@@ -186,6 +188,7 @@ if st.session_state.logged_in:
 
         # ---------------------------
         # 7.1 Preparar lista de nomes para busca (respeitando os filtros aplicados)
+        # ESTA LÓGICA PERMANECE AQUI, POIS DEPENDE DOS DATAFRAMES FILTRADOS
         # ---------------------------
         nomes_from_cad = set()
         if 'Nome_do_Associado' in cadastro_filtrado.columns:
@@ -197,8 +200,8 @@ if st.session_state.logged_in:
         nomes_possiveis = sorted(list(nomes_from_cad.union(nomes_from_util)))
         nomes_norm_map = {normalize_name(n): n for n in nomes_possiveis}
 
-        # Determine search string (prefer topo input if user typed there)
-        search_query = search_input_top.strip() if search_input_top.strip() != "" else search_input_sidebar.strip()
+        # Determine search string (AGORA USANDO SESSION STATE)
+        search_query = st.session_state.search_query.strip()
         matches = []
         if search_query:
             q_norm = normalize_name(search_query)
@@ -214,15 +217,10 @@ if st.session_state.logged_in:
             else:
                 matches = nomes_possiveis[:20]
 
-        # UI: selection box com matches
-        st.sidebar.subheader("Resultados da busca")
-        selected_benef = None
-        if matches:
-            selected_benef = st.sidebar.selectbox("Selecione o beneficiário", options=[""] + matches, index=0)
-            if selected_benef == "":
-                selected_benef = None
-        else:
-            st.sidebar.write("Nenhum resultado")
+        # O código antigo de resultados no sidebar foi removido.
+        # A variável local 'selected_benef' será um alias para o session state.
+        selected_benef = st.session_state.selected_benef
+
 
         # ---------------------------
         # 8. Dashboard Tabs por Role
@@ -230,9 +228,11 @@ if st.session_state.logged_in:
 
         # Definir abas disponíveis por cargo
         if role == "RH":
-            tabs = ["KPIs Gerais", "Comparativo de Planos", "Alertas & Inconsistências", "Exportação"]
+            # Adicionado "Busca" antes de "Exportação"
+            tabs = ["KPIs Gerais", "Comparativo de Planos", "Alertas & Inconsistências", "Busca", "Exportação"]
         elif role == "MEDICO":
-            tabs = ["CIDs Crônicos & Procedimentos"]
+            # Adicionado "Busca"
+            tabs = ["CIDs Crônicos & Procedimentos", "Busca"]
         else:
             tabs = []
 
@@ -263,7 +263,52 @@ if st.session_state.logged_in:
 
         for i, tab_name in enumerate(tabs):
             with tab_objects[i]:
-                if tab_name == "KPIs Gerais":
+                if tab_name == "Busca":
+                    st.subheader("🔎 Busca de Beneficiário")
+
+                    # Input de texto para a busca, atualiza o session state
+                    search_query_input = st.text_input(
+                        "Digite nome ou parte do nome do beneficiário:",
+                        value=st.session_state.search_query,
+                        key="search_input_tab"
+                    )
+                    
+                    # Atualiza o session_state do query. O Streamlit re-run e o search_query
+                    # usado para gerar 'matches' (linha ~200) será o novo valor.
+                    if search_query_input.strip() != st.session_state.search_query:
+                        st.session_state.search_query = search_query_input.strip()
+                        # Opcional: Limpar seleção anterior se a busca mudar
+                        st.session_state.selected_benef = None
+                        st.rerun() 
+                    
+                    st.markdown(f"**Resultados encontrados:** {len(matches)} beneficiários (baseado nos filtros laterais)")
+
+                    # Determina o índice de seleção atual para manter a seleção após o rerun
+                    current_selection_index = 0
+                    if st.session_state.selected_benef in matches:
+                        current_selection_index = matches.index(st.session_state.selected_benef) + 1
+                    
+                    # Selectbox para o resultado da busca
+                    selected_benef_temp = st.selectbox(
+                        "Selecione o beneficiário (filtros gerais aplicados):",
+                        options=[""] + matches,
+                        index=current_selection_index,
+                        key="benef_selectbox_tab"
+                    )
+
+                    # Atualiza o session state de beneficiário selecionado
+                    new_selected_benef = selected_benef_temp if selected_benef_temp != "" else None
+                    st.session_state.selected_benef = new_selected_benef
+                    
+                    if st.session_state.selected_benef:
+                        st.success(f"Beneficiário selecionado: **{st.session_state.selected_benef}**. Detalhes exibidos abaixo.")
+                    elif st.session_state.search_query:
+                        st.info(f"Nenhum beneficiário encontrado para '{st.session_state.search_query}'.")
+                    elif not matches:
+                         st.info(f"Nenhum beneficiário encontrado para os filtros atuais. Exibindo {len(matches)} sugestões.")
+
+
+                elif tab_name == "KPIs Gerais":
                     st.subheader("📌 KPIs Gerais")
                     custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0
                     st.metric("Custo Total (R$)", f"{custo_total:,.2f}")
@@ -370,6 +415,7 @@ if st.session_state.logged_in:
         # ---------------------------
         # 9. Exibição detalhada do beneficiário selecionado (expander/modal) + export individual
         # ---------------------------
+        # Usa a variável 'selected_benef' que reflete o session state.
         if selected_benef:
             util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef].copy()
             cad_b = cadastro_filtrado[cadastro_filtrado['Nome_do_Associado'] == selected_benef].copy()
