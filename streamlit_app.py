@@ -84,9 +84,19 @@ else:
     # ---------------------------
     # HEADER
     # ---------------------------
-    col1,col2=st.columns([3,1])
-    with col1: st.title("🏥 Dashboard Plano de Saúde")
-    with col2: st.markdown(f"<div style='text-align:right;color:#667eea;font-weight:600'>{role}<br>{st.session_state.username}</div>", unsafe_allow_html=True)
+    if st.session_state.logged_in:
+    role = st.session_state.role  # define a variável role aqui
+    col1, col2 = st.columns([3,1])
+    with col1:
+        st.title(f"🏥 Dashboard Plano de Saúde")
+    with col2:
+        st.markdown(
+            f"<div style='text-align:right;color:#667eea;font-weight:600'>{role}<br>{st.session_state.username}</div>", 
+            unsafe_allow_html=True
+        )
+else:
+    st.info("Por favor, faça login no menu lateral.")
+
 
     # ---------------------------
     # UPLOAD
