@@ -6,6 +6,16 @@ import plotly.express as px
 from io import BytesIO
 
 # ---------------------------
+# 0. FUNÇÃO DE FORMATAÇÃO BRASILEIRA (NOVO)
+# ---------------------------
+def format_brl(value):
+    """Formata um float ou int para string no padrão monetário brasileiro (R$ 1.234,56)"""
+    if pd.isna(value):
+        return "R$ 0,00"
+    # Formata como string americana (vírgula decimal), depois inverte para o padrão brasileiro
+    return f"R$ {value:,.2f}".replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
+
+# ---------------------------
 # 0. Autenticação segura
 # ---------------------------
 # Configuração inicial do Streamlit
@@ -219,11 +229,20 @@ if st.session_state.logged_in:
             export_index = tabs.index("Exportação")
             tabs.insert(export_index, "Busca")
         elif role == "MEDICO":
-             # Adiciona Busca para o Médico também
-             tabs.append("Busca")
+              # Adiciona Busca para o Médico também
+              tabs.append("Busca")
 
         tab_objects = st.tabs(tabs)
-
+        
+        # ---------------------------
+        # CONFIGURAÇÃO DE FORMATAÇÃO PARA DATAFRAMES (NOVO)
+        # Formatação de float para o padrão brasileiro antes de exibir qualquer dataframe
+        # Isso afeta todos os dataframes exibidos com st.dataframe
+        if 'Valor' in utilizacao_filtrada.columns:
+             # Isso é um hack de pandas, que funciona na maioria das vezes no st.dataframe, 
+             # mas o ideal seria usar st.column_config em versões recentes do Streamlit
+             pd.options.display.float_format = 'R$ {:,.2f}'.format
+        
         # ---------------------------
         # 8.1 Implementação da aba "Busca" e Detalhes
         # ---------------------------
@@ -274,7 +293,8 @@ if st.session_state.logged_in:
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns:
                         custo_total_b = util_b['Valor'].sum() if 'Valor' in util_b.columns else 0
                         volume_b = len(util_b)
-                        st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
+                        # APLICA FORMAT_BRL AQUI (MODIFICADO)
+                        st.metric("Custo total (filtros atuais)", format_brl(custo_total_b)) 
                         st.metric("Volume (atendimentos)", f"{volume_b}")
 
                     # Expander com detalhes
@@ -294,7 +314,8 @@ if st.session_state.logged_in:
                         # Histórico de custos e procedimentos
                         st.subheader("Histórico de custos e procedimentos")
                         if 'Valor' in util_b.columns:
-                            st.metric("Custo total (filtros atuais)", f"R$ {custo_total_b:,.2f}")
+                            # APLICA FORMAT_BRL AQUI (MODIFICADO)
+                            st.metric("Custo total (filtros atuais)", format_brl(custo_total_b))
                             
                             # evolução do beneficiário
                             if 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
@@ -302,15 +323,18 @@ if st.session_state.logged_in:
                                 evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
                                 evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
                                 fig_b = px.line(evol_b, x='Mes_Ano', y='Valor', markers=True, labels={'Mes_Ano':'Mês/Ano','Valor':'R$'})
+                                # MODIFICADO: Formatação de eixo para BR
+                                fig_b.update_yaxes(tickprefix="R$", tickformat=".2f")
+                                fig_b.update_traces(hovertemplate='R$ %{y:,.2f}') 
                                 st.plotly_chart(fig_b, use_container_width=True)
                             else:
                                 st.write("Dados de data e valor insuficientes para gráfico de evolução.")
 
 
-                        if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
-                            top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(20)
-                            st.write("Principais procedimentos utilizados pelo beneficiário")
-                            st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
+                            if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
+                                top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(20)
+                                st.write("Principais procedimentos utilizados pelo beneficiário")
+                                st.dataframe(top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'}))
 
                         # CIDs associados
                         st.subheader("CIDs associados")
@@ -324,7 +348,6 @@ if st.session_state.logged_in:
                             st.write("Coluna 'Codigo_do_CID' não encontrada.")
 
                         
-
                         # Exportar relatório individual em Excel
                         st.subheader("Exportar relatório individual")
                         buf_ind = BytesIO()
@@ -351,7 +374,7 @@ if st.session_state.logged_in:
                             mime="application/vnd.ms-excel"
                         )
                 # --- FIM: Seção Detalhada ---
-
+        
         # ---------------------------
         # 9. Conteúdo das demais abas (KPIs, Comparativo, Alertas, Exportação, CIDs...)
         # ---------------------------
@@ -364,7 +387,8 @@ if st.session_state.logged_in:
                 if tab_name == "KPIs Gerais":
                     st.subheader("📌 KPIs Gerais")
                     custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0
-                    st.metric("Custo Total (R$)", f"{custo_total:,.2f}")
+                    # APLICA FORMAT_BRL AQUI (MODIFICADO)
+                    st.metric("Custo Total (R$)", format_brl(custo_total))
 
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
@@ -384,6 +408,9 @@ if st.session_state.logged_in:
                             evolucao, x='Mes_Ano', y='Valor', color='Valor', text='Valor',
                             labels={'Mes_Ano':'Mês/Ano','Valor':'R$'}, height=400
                         )
+                        # MODIFICADO: Formatação de eixo para BR
+                        fig.update_yaxes(tickprefix="R$", tickformat=".2f")
+                        fig.update_traces(hovertemplate='R$ %{y:,.2f}') 
                         st.plotly_chart(fig, use_container_width=True)
 
                 elif tab_name == "Comparativo de Planos":
@@ -393,6 +420,9 @@ if st.session_state.logged_in:
                         st.subheader("📊 Comparativo de Planos")
                         comp = utilizacao_filtrada.groupby(plano_col)['Valor'].sum().reset_index()
                         fig = px.bar(comp, x=plano_col, y='Valor', color=plano_col, text='Valor', height=400)
+                        # MODIFICADO: Formatação de eixo para BR
+                        fig.update_yaxes(tickprefix="R$", tickformat=".2f")
+                        fig.update_traces(hovertemplate='R$ %{y:,.2f}') 
                         st.plotly_chart(fig, use_container_width=True)
 
                         comp_volume = utilizacao_filtrada.groupby(plano_col).size().reset_index(name='Volume')
@@ -483,3 +513,6 @@ if st.session_state.logged_in:
         # ---------------------------
         # A SEÇÃO 10 ORIGINAL FOI REMOVIDA DAQUI
         # ---------------------------
+
+        # Limpa o hack do Pandas para não afetar outras células ou scripts
+        pd.options.display.float_format = None
