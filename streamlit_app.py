@@ -46,9 +46,7 @@ def clean_cols(df):
 def normalize_name(s):
     return unidecode(str(s)).strip().upper()
 
-# ---------------------------
-# AUTENTICAÇÃO
-# ---------------------------
+# Inicializa sessão
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -59,21 +57,18 @@ def login():
     username = st.sidebar.text_input("Usuário")
     password = st.sidebar.text_input("Senha", type="password")
 
-    if st.sidebar.button("Entrar", use_container_width=True):
-        # Definindo credenciais corretas
-        credentials = {
-            "usuarios": ["rh_teste", "medico_teste"],
-            "senhas": ["senha_rh", "senha_med"],
-            "roles": ["RH", "MEDICO"]
-        }
+    if st.sidebar.button("Entrar"):
+        # Credenciais hardcoded
+        usuarios = ["rh_teste", "medico_teste"]
+        senhas = ["senha_rh", "senha_med"]
+        roles = ["RH", "MEDICO"]
 
-        # Verifica se o usuário existe
-        if username in credentials["usuarios"]:
-            idx = credentials["usuarios"].index(username)
-            if password == credentials["senhas"][idx]:
+        if username in usuarios:
+            idx = usuarios.index(username)
+            if password == senhas[idx]:
                 st.session_state.logged_in = True
                 st.session_state.username = username
-                st.session_state.role = credentials["roles"][idx]
+                st.session_state.role = roles[idx]
                 st.success(f"✅ Bem-vindo(a), {username}!")
                 st.experimental_rerun()
             else:
@@ -81,11 +76,11 @@ def login():
         else:
             st.error("❌ Usuário não encontrado")
 
-# Chama o login se não estiver logado
+# Executa login se não estiver logado
 if not st.session_state.logged_in:
     login()
 else:
-    role=st.session_state.role
+    st.write(f"✅ Logado como: {st.session_state.username} ({st.session_state.role})")
     # ---------------------------
     # HEADER
     # ---------------------------
