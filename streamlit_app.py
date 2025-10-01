@@ -183,7 +183,7 @@ def login_ui():
                 st.session_state.username = username
                 st.session_state.role = roles[idx]
                 st.success(f"Bem-vindo(a), {username} ({roles[idx]})")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.sidebar.error("Senha incorreta")
         else:
