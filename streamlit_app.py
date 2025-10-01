@@ -102,8 +102,13 @@ def load_mock_data():
     df_atestados['Codigo_do_CID'] = np.random.choice(['M54.5', 'R51', 'J45.9', 'Z00.0'], len(df_atestados))
 
 
-    # Merge para adicionar informações de idade/sexo na utilização (muito útil para filtros)
-    df_utilizacao = pd.merge(df_utilizacao, df_cadastro[['Nome_do_Associado', 'Idade', 'Sexo', 'Tipo_Beneficiario']], on='Nome_do_Associado', how='left')
+    # CORREÇÃO: Merge para adicionar informações de idade, sexo, TIPO DE BENEFICIÁRIO e MUNICÍPIO na utilização.
+    df_utilizacao = pd.merge(
+        df_utilizacao, 
+        df_cadastro[['Nome_do_Associado', 'Idade', 'Sexo', 'Tipo_Beneficiario', 'Município']], # Adicionado 'Município'
+        on='Nome_do_Associado', 
+        how='left'
+    )
 
     return df_utilizacao, df_cadastro, df_med_trab, df_atestados
 
@@ -157,7 +162,7 @@ sexo_selecionado = st.sidebar.multiselect("🚻 Sexo", options=sexo_options, def
 utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Sexo'].isin(sexo_selecionado)].copy()
 
 
-# Município
+# Município (CORRIGIDO: A coluna agora existe em utilizacao_filtrada)
 municipio_options = utilizacao_filtrada['Município'].dropna().unique().tolist()
 municipio_selecionado = st.sidebar.multiselect("🏙️ Município", options=municipio_options, default=municipio_options)
 utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Município'].isin(municipio_selecionado)].copy()
@@ -632,7 +637,7 @@ else:
                         with pd.ExcelWriter(buf_ind, engine='xlsxwriter') as writer:
                             if not util_b.empty:
                                 # remove a coluna de Mes_Ano temporária para exportação
-                                util_b_export = util_b.drop(columns=['Mes_Ano', 'Tipo_Beneficiario'], errors='ignore')
+                                util_b_export = util_b.drop(columns=['Mes_Ano', 'Tipo_Beneficiario', 'Município', 'Idade', 'Sexo'], errors='ignore')
                                 util_b_export.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
                             if not cad_b.empty:
                                 cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
@@ -689,3 +694,4 @@ else:
     
     st.sidebar.markdown("---")
     st.sidebar.success("✅ Processamento de dados concluído. Utilize as abas.")
+
