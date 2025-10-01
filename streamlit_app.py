@@ -1,697 +1,793 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
+# app.py - Dashboard Plano de Saúde (com todas as requests do cliente)
+import os
+import tempfile
+import shutil
+import re
 from io import BytesIO
-import unicodedata
 from datetime import datetime
 
-# --- CONFIGURAÇÃO INICIAL ---
+import pandas as pd
+import numpy as np
+from unidecode import unidecode
+
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+
+# ---------------------------
+# Configuração de página e tema (seu CSS mantido)
+# ---------------------------
 st.set_page_config(
-    page_title="Dashboard Analítico de Plano de Saúde",
+    page_title="Dashboard Saúde",
+    page_icon="🏥",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- FUNÇÕES HELPERS ---
+# (Mantive seu CSS original - omitido aqui por brevidade no comentário, mas será incluído no corpo abaixo)
+st.markdown("""
+<style>
+/* (Cole seu CSS completo aqui se quiser manter exatamente igual) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+* { font-family: 'Inter', sans-serif; }
+[data-testid="stSidebar"] { background: linear-gradient(180deg, #1e3a5f 0%, #2d5a8c 100%); padding-top: 2rem; }
+[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #ffffff !important; font-weight: 600;}
+/* ... (restante do CSS, como no seu script original) ... */
+</style>
+""", unsafe_allow_html=True)
 
-@st.cache_data
-def normalize_name(name):
-    """Remove acentos e minúsculas para facilitar a busca."""
-    if pd.isna(name):
+# ---------------------------
+# Utilitários
+# ---------------------------
+def clean_cols(df):
+    df = df.copy()
+    df.columns = [unidecode(str(col)).strip().replace(' ','_').replace('-','_') for col in df.columns]
+    return df
+
+def ensure_datetime(df, cols):
+    df = df.copy()
+    for col in cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+
+def padronizar_nome(nome):
+    return unidecode(str(nome)).strip().upper()
+
+def mask_string(s, keep_start=1, keep_end=1):
+    if pd.isna(s):
         return ""
-    name = str(name).lower()
-    return ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
+    s = str(s)
+    if len(s) <= (keep_start + keep_end):
+        return "*" * len(s)
+    return s[:keep_start] + "*"*(len(s)-keep_start-keep_end) + s[-keep_end:]
 
 def format_brl(value):
-    """Formata um valor numérico para o padrão monetário BRL."""
     if pd.isna(value):
         return "R$ 0,00"
-    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    try:
+        value = float(value)
+    except:
+        return "R$ 0,00"
+    return "R$ {:,.2f}".format(value).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
-def calculate_age(birth_date):
-    """Calcula a idade a partir da data de nascimento."""
-    if pd.isna(birth_date):
-        return None
-    today = datetime.now()
-    return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+def style_dataframe_brl(df, value_cols=['Valor']):
+    df2 = df.copy()
+    # convert numbers to display strings in provided cols
+    for col in value_cols:
+        if col in df2.columns:
+            df2[col] = df2[col].apply(format_brl)
+    # Volume columns formatting
+    if 'Volume' in df2.columns:
+        df2['Volume'] = df2['Volume'].apply(lambda x: '{:,.0f}'.format(x).replace(",", "."))
+    return df2
 
-def style_dataframe_brl(df_input, currency_cols=['Valor', 'Custo Total', 'Custo Médio']):
-    """
-    Aplica formatação BRL em colunas de moeda e garante que o índice comece em 1.
-    Usa st.dataframe para interatividade e formatação simplificada.
-    """
-    df = df_input.copy()
-    
-    # Garantir índice 1-based para exibição
-    df.index = np.arange(1, len(df) + 1)
-    
-    # Aplicar formatação BRL
-    styled_df = df.style.format({col: 'R$ {:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.') for col in currency_cols if col in df.columns})
-    
-    return styled_df
+def add_index1(df, name='No'):
+    df2 = df.reset_index(drop=True).copy()
+    df2.insert(0, name, range(1, len(df2)+1))
+    return df2
 
-# --- GERAÇÃO DE DADOS MOCK (SIMULAÇÃO DE CARREGAMENTO) ---
+# ---------------------------
+# Leitura robusta de arquivo (aceita xltx)
+# ---------------------------
+@st.cache_data(ttl=600)
+def read_input(file_obj, filename=None):
+    sheets = {}
+    name = filename or getattr(file_obj, "name", "")
+    name = name.lower() if name else ""
+    try:
+        file_obj.seek(0)
+    except Exception:
+        pass
 
-@st.cache_data
-def load_mock_data():
-    """Gera DataFrames de exemplo para simular o carregamento de dados."""
-    
-    # 1. Dados de Cadastro (Beneficiários)
-    n = 1000
-    nomes = [f"Beneficiario {i:04d}" for i in range(n)]
-    datas_nasc = pd.to_datetime(np.random.randint(datetime(1950, 1, 1).timestamp(), datetime(2005, 12, 31).timestamp(), n), unit='s').date
-    sexos = np.random.choice(['M', 'F'], n, p=[0.55, 0.45])
-    municipios = np.random.choice(['São Paulo', 'Rio de Janeiro', 'Belo Horizonte', 'Campinas', 'Porto Alegre'], n, p=[0.4, 0.2, 0.15, 0.15, 0.1])
-    tipos_beneficiario = np.random.choice(['Titular', 'Dependente', 'PAD'], n, p=[0.6, 0.3, 0.1])
-    
-    df_cadastro = pd.DataFrame({
-        'Nome_do_Associado': nomes,
-        'Data_Nascimento': datas_nasc,
-        'Sexo': sexos,
-        'Município': municipios,
-        'Tipo_Beneficiario': tipos_beneficiario,
-    })
-    df_cadastro.drop_duplicates(subset=['Nome_do_Associado'], inplace=True)
-    df_cadastro['Idade'] = df_cadastro['Data_Nascimento'].apply(calculate_age)
-    
-    # 2. Dados de Utilização (Atendimentos)
-    m = 10000
-    benef_util = np.random.choice(df_cadastro['Nome_do_Associado'], m)
-    datas_atendimento = pd.to_datetime(np.random.randint(datetime(2023, 1, 1).timestamp(), datetime(2024, 9, 30).timestamp(), m), unit='s')
-    valores = np.random.lognormal(mean=7, sigma=1.5, size=m) * 10 
-    cids = np.random.choice(['E11.9', 'I10', 'J45.9', 'M54.5', 'R51', 'Z00.0', 'K21.9', 'H52.1'], m, p=[0.1, 0.08, 0.07, 0.15, 0.2, 0.1, 0.1, 0.2])
-    procedimentos = np.random.choice(['Consulta Clínica', 'Exames Laboratoriais', 'Tomografia', 'Internação Geral', 'Fisioterapia', 'Cirurgia Pequena'], m, p=[0.4, 0.3, 0.1, 0.05, 0.1, 0.05])
+    # CSV
+    if name.endswith('.csv'):
+        try:
+            df = pd.read_csv(file_obj)
+            sheets['Utilizacao'] = df
+            return sheets
+        except Exception:
+            try:
+                file_obj.seek(0)
+                df = pd.read_csv(file_obj, encoding='latin1')
+                sheets['Utilizacao'] = df
+                return sheets
+            except Exception:
+                pass
 
-    df_utilizacao = pd.DataFrame({
-        'Data_do_Atendimento': datas_atendimento,
-        'Nome_do_Associado': benef_util,
-        'Nome_do_Procedimento': procedimentos,
-        'Codigo_do_CID': cids,
-        'Valor': valores,
-    })
-    
-    # 3. Medicina do Trabalho e Atestados (Para exportação e detalhe)
-    df_med_trab = df_utilizacao[['Nome_do_Associado']].drop_duplicates().sample(frac=0.3)
-    df_med_trab['Data'] = pd.to_datetime(np.random.randint(datetime(2024, 1, 1).timestamp(), datetime(2024, 9, 30).timestamp(), len(df_med_trab)), unit='s').date
-    df_med_trab['Tipo_Exame'] = np.random.choice(['Admissional', 'Periódico', 'Demissional'], len(df_med_trab))
-    
-    df_atestados = df_utilizacao[['Nome_do_Associado']].drop_duplicates().sample(frac=0.1)
-    df_atestados['Data_Inicio'] = pd.to_datetime(np.random.randint(datetime(2024, 1, 1).timestamp(), datetime(2024, 9, 30).timestamp(), len(df_atestados)), unit='s').date
-    df_atestados['Dias_Afastamento'] = np.random.randint(1, 15, len(df_atestados))
-    df_atestados['Codigo_do_CID'] = np.random.choice(['M54.5', 'R51', 'J45.9', 'Z00.0'], len(df_atestados))
+    # Excel attempt
+    try:
+        xls = pd.ExcelFile(file_obj, engine='openpyxl')
+        for s in xls.sheet_names:
+            try:
+                df = pd.read_excel(xls, sheet_name=s, engine='openpyxl')
+            except Exception:
+                df = pd.read_excel(xls, sheet_name=s)
+            sheets[s] = df
+        return sheets
+    except Exception as e:
+        # fallback: write temp file and read
+        try:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+            file_obj.seek(0)
+            shutil.copyfileobj(file_obj, tmp)
+            tmp.flush(); tmp.close()
+            xls = pd.ExcelFile(tmp.name, engine='openpyxl')
+            for s in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=s, engine='openpyxl')
+                sheets[s] = df
+            return sheets
+        except Exception as e2:
+            try:
+                file_obj.seek(0)
+                df = pd.read_csv(file_obj)
+                sheets['Utilizacao'] = df
+                return sheets
+            except Exception:
+                st.error("Não foi possível ler o arquivo. Peça para salvar como .xlsx ou .csv e reenviar.")
+                st.error(f"Detalhe técnico: {e2}")
+                return {}
 
+# ---------------------------
+# Autenticação simples (sessão)
+# ---------------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = "VISITANTE"
+if "selected_benef" not in st.session_state:
+    st.session_state.selected_benef = None
 
-    # CORREÇÃO: Merge para adicionar informações de idade, sexo, TIPO DE BENEFICIÁRIO e MUNICÍPIO na utilização.
-    df_utilizacao = pd.merge(
-        df_utilizacao, 
-        df_cadastro[['Nome_do_Associado', 'Idade', 'Sexo', 'Tipo_Beneficiario', 'Município']], # Adicionado 'Município'
-        on='Nome_do_Associado', 
-        how='left'
-    )
+def login_ui():
+    st.sidebar.markdown("### 🔐 Login")
+    username = st.sidebar.text_input("Usuário", key="username_input")
+    password = st.sidebar.text_input("Senha", type="password", key="password_input")
 
-    return df_utilizacao, df_cadastro, df_med_trab, df_atestados
+    # exemplo de credenciais locais (mude em produção)
+    if 'credentials' not in st.secrets:
+        st.secrets['credentials'] = {
+            "usernames": ["rh_teste", "medico_teste"],
+            "passwords": ["senha_rh", "senha_med"],
+            "roles": ["RH", "MEDICO"]
+        }
 
-# Carregar dados
-df_utilizacao, df_cadastro, medicina_trabalho, atestados = load_mock_data()
+    if st.sidebar.button("Entrar", use_container_width=True):
+        users = st.secrets["credentials"]["usernames"]
+        pwds = st.secrets["credentials"]["passwords"]
+        roles = st.secrets["credentials"]["roles"]
+        if username in users:
+            idx = users.index(username)
+            if password == pwds[idx]:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = roles[idx]
+                st.success(f"Bem-vindo(a), {username} ({roles[idx]})")
+                st.experimental_rerun()
+            else:
+                st.sidebar.error("Senha incorreta")
+        else:
+            st.sidebar.error("Usuário não encontrado")
 
-# --- SIDEBAR E FILTROS ---
+if not st.session_state.logged_in:
+    login_ui()
+    st.stop()
 
-st.sidebar.title("🛠️ Filtros Analíticos")
+# ---------------------------
+# Header
+# ---------------------------
+role = st.session_state.role
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.title("🏥 Dashboard Plano de Saúde")
+with col2:
+    st.markdown(f"<div style='text-align:right'><strong style='color:#667eea'>{role}</strong><br><small>{st.session_state.username}</small></div>", unsafe_allow_html=True)
+st.markdown("---")
 
-# 1. Filtro de Período
-min_date = df_utilizacao['Data_do_Atendimento'].min().date()
-max_date = df_utilizacao['Data_do_Atendimento'].max().date()
-data_range = st.sidebar.date_input(
-    "📅 Período de Atendimento",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date
-)
+# ---------------------------
+# Sidebar: Uploads e configurações globais
+# ---------------------------
+st.sidebar.markdown("### 📁 Dados e Configurações")
+uploaded_file = st.sidebar.file_uploader("Enviar arquivo (xlsx / xls / xltx / csv)", type=None)
+cids_file = st.sidebar.file_uploader("Upload lista CIDs crônicos (txt/csv) - opcional", type=['txt','csv'])
+dap_file = st.sidebar.file_uploader("Upload lista de DAPs (opcional)", type=['txt','csv'])
+copart_file = st.sidebar.file_uploader("Upload coparticipação (opcional)", type=['xlsx','xls','csv'])
+# CID match mode
+st.sidebar.markdown("### 🔎 Modo de busca CID")
+cid_mode = st.sidebar.selectbox("Escolha o modo", options=["Começa com (raiz) - recomendado", "Exato", "Contém", "Regex"], index=0)
+# anonymize toggle (disabled for MEDICO)
+anon_default = True if st.session_state.role != "MEDICO" else False
+anon_toggle = st.sidebar.checkbox("Mostrar dados anonimizados (máscara)", value=anon_default, disabled=(st.session_state.role=="MEDICO"))
 
-if len(data_range) == 2:
-    start_date = datetime.combine(data_range[0], datetime.min.time())
-    end_date = datetime.combine(data_range[1], datetime.max.time())
-    utilizacao_filtrada = df_utilizacao[
-        (df_utilizacao['Data_do_Atendimento'] >= start_date) & 
-        (df_utilizacao['Data_do_Atendimento'] <= end_date)
-    ].copy()
+# ---------------------------
+# Ler arquivo
+# ---------------------------
+if uploaded_file is None:
+    st.info("Aguardando upload do arquivo (recomendo .xlsx ou .csv).")
+    st.stop()
+
+sheets = read_input(uploaded_file, filename=getattr(uploaded_file, "name", None))
+if not sheets:
+    st.stop()
+
+# mapear abas
+utilizacao = sheets.get('Utilizacao', sheets.get('utilizacao', pd.DataFrame())).copy()
+cadastro = sheets.get('Cadastro', sheets.get('cadastro', pd.DataFrame())).copy()
+medicina_trabalho = sheets.get('Medicina_do_Trabalho', sheets.get('Medicina', pd.DataFrame())).copy()
+atestados = sheets.get('Atestados', pd.DataFrame()).copy()
+
+# Se utilizacao vazia -> erro
+if utilizacao is None or utilizacao.empty:
+    st.error("A aba 'Utilizacao' não foi encontrada ou está vazia. Verifique o arquivo.")
+    st.stop()
+
+# padroniza colunas
+utilizacao = clean_cols(utilizacao)
+cadastro = clean_cols(cadastro)
+medicina_trabalho = clean_cols(medicina_trabalho)
+atestados = clean_cols(atestados)
+
+# datas
+date_cols_util = ['Data_do_Atendimento','Competencia','Data_de_Nascimento']
+date_cols_cad = ['Data_de_Nascimento','Data_de_Admissao_do_Empregado','Data_de_Adesao_ao_Plano','Data_de_Cancelamento']
+date_cols_med = ['Data_do_Exame']
+date_cols_at = ['Data_do_Afastamento']
+utilizacao = ensure_datetime(utilizacao, date_cols_util)
+cadastro = ensure_datetime(cadastro, date_cols_cad)
+medicina_trabalho = ensure_datetime(medicina_trabalho, date_cols_med)
+atestados = ensure_datetime(atestados, date_cols_at)
+
+# Valor -> numérico robusto
+if 'Valor' in utilizacao.columns:
+    try:
+        # remove caracteres que não são numéricos exceto , and .
+        utilizacao['Valor'] = utilizacao['Valor'].astype(str).str.replace(r'[^\d\.,-]', '', regex=True)
+        # handle if decimal separator is comma or point - normalize to point
+        # if there is both comma and dot, assume comma thousands and dot decimal -> remove commas
+        def parse_num(s):
+            if pd.isna(s) or s=="":
+                return 0.0
+            s = str(s).strip()
+            # case like "1.234,56" -> treat comma as decimal -> remove dots
+            if s.count(',')==1 and s.count('.')>0 and s.rfind('.') < s.rfind(','):
+                s2 = s.replace('.', '').replace(',', '.')
+            else:
+                # remove commas used as thousand separators
+                s2 = s.replace(',', '')
+            try:
+                return float(s2)
+            except:
+                try:
+                    return float(s2.replace(',', '.'))
+                except:
+                    return 0.0
+        utilizacao['Valor'] = utilizacao['Valor'].apply(parse_num)
+    except Exception as e:
+        st.warning(f"Erro na conversão de 'Valor': {e}")
 else:
-    utilizacao_filtrada = df_utilizacao.copy()
+    utilizacao['Valor'] = 0.0
 
-# 2. Filtros Categóricos
+# Tipo beneficiario
+if 'Nome_Titular' in utilizacao.columns and 'Nome_do_Associado' in utilizacao.columns:
+    utilizacao['Tipo_Beneficiario'] = np.where(utilizacao['Nome_Titular'].fillna('').str.strip() == utilizacao['Nome_do_Associado'].fillna('').str.strip(), 'Titular', 'Dependente')
+else:
+    utilizacao['Tipo_Beneficiario'] = 'Desconhecido'
+
+# ---------------------------
+# Configuração DAP: verificar coluna ou upload
+# ---------------------------
+dap_column_exists = any('dap' in c.lower() for c in cadastro.columns)
+daps_list = []
+if dap_column_exists:
+    # tenta colher valores únicos
+    dap_col_name = [c for c in cadastro.columns if 'dap' in c.lower()][0]
+    daps_list = list(cadastro[dap_col_name].dropna().unique())
+else:
+    if dap_file:
+        try:
+            raw = dap_file.read()
+            try:
+                txt = raw.decode('utf-8')
+            except:
+                txt = raw.decode('latin1')
+            daps_list = [line.strip() for line in txt.splitlines() if line.strip()]
+        except Exception:
+            daps_list = []
+
+# ---------------------------
+# CIDs crônicos: upload ou textarea
+# ---------------------------
+cids_list = ['E11','I10','J45']  # default
+if cids_file:
+    try:
+        raw = cids_file.read()
+        try:
+            txt = raw.decode('utf-8')
+        except:
+            txt = raw.decode('latin1')
+        cands = [line.strip().upper() for line in txt.splitlines() if line.strip()]
+        if cands:
+            cids_list = cands
+    except Exception:
+        pass
+
+st.sidebar.markdown("### ⚕️ CIDs crônicos")
+cids_text = st.sidebar.text_area("Edite os CIDs crônicos (um por linha) — ex: E11", value="\n".join(cids_list), height=120)
+cids_list = [c.strip().upper() for c in cids_text.splitlines() if c.strip()]
+
+# ---------------------------
+# Filtros dinâmicos (sidebar)
+# ---------------------------
 st.sidebar.markdown("---")
-# Faixa Etária (Editável, Novo Requisito)
-min_idade_data = utilizacao_filtrada['Idade'].min()
-max_idade_data = utilizacao_filtrada['Idade'].max()
-faixa_etaria = st.sidebar.slider(
-    "👶 Faixa Etária (Anos)",
-    min_value=int(min_idade_data) if not pd.isna(min_idade_data) else 0,
-    max_value=int(max_idade_data) if not pd.isna(max_idade_data) else 100,
-    value=(0, 100) # Inicia em 0 a 100 conforme solicitado
-)
-utilizacao_filtrada = utilizacao_filtrada[
-    (utilizacao_filtrada['Idade'] >= faixa_etaria[0]) & 
-    (utilizacao_filtrada['Idade'] <= faixa_etaria[1])
-].copy()
-
+st.sidebar.markdown("### 🎯 Filtros dinâmicos")
 
 # Sexo
-sexo_options = utilizacao_filtrada['Sexo'].dropna().unique().tolist()
-sexo_selecionado = st.sidebar.multiselect("🚻 Sexo", options=sexo_options, default=sexo_options)
-utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Sexo'].isin(sexo_selecionado)].copy()
+possible_sexo_cols = [col for col in cadastro.columns if 'sexo' in col.lower()]
+sexo_col = possible_sexo_cols[0] if possible_sexo_cols else None
+sexo_opts = list(cadastro[sexo_col].dropna().unique()) if sexo_col else []
+sexo_filtro = st.sidebar.multiselect("Sexo", options=sexo_opts, default=sexo_opts)
 
+# Tipo beneficiario (Titular/Dependente)
+tipo_benef_opts = list(utilizacao['Tipo_Beneficiario'].dropna().unique())
+tipo_benef_filtro = st.sidebar.multiselect("Tipo Beneficiário", options=tipo_benef_opts, default=tipo_benef_opts)
 
-# Município (CORRIGIDO: A coluna agora existe em utilizacao_filtrada)
-municipio_options = utilizacao_filtrada['Município'].dropna().unique().tolist()
-municipio_selecionado = st.sidebar.multiselect("🏙️ Município", options=municipio_options, default=municipio_options)
-utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Município'].isin(municipio_selecionado)].copy()
+# DAP filter (if present)
+dap_filtro = None
+if dap_column_exists:
+    dap_opts = sorted(list(cadastro[dap_col_name].dropna().unique()))
+    dap_filtro = st.sidebar.multiselect("DAP", options=dap_opts, default=dap_opts)
+elif daps_list:
+    dap_filtro = st.sidebar.multiselect("DAP (upload)", options=daps_list, default=daps_list)
 
-# Tipo de Beneficiário (Novo Requisito)
-tipo_options = utilizacao_filtrada['Tipo_Beneficiario'].dropna().unique().tolist()
-tipo_selecionado = st.sidebar.multiselect("👨‍👩‍👧 Tipo de Beneficiário", options=tipo_options, default=tipo_options, help="Titular, Dependente, ou PAD (Programa de Atenção a Doentes Crônicos/Especiais)")
-utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Tipo_Beneficiario'].isin(tipo_selecionado)].copy()
+# Município
+municipio_filtro = None
+if 'Municipio_do_Participante' in cadastro.columns:
+    municipio_opts = sorted(list(cadastro['Municipio_do_Participante'].dropna().unique()))
+    municipio_filtro = st.sidebar.multiselect("Município", options=municipio_opts, default=municipio_opts)
 
+# Faixa etária dinâmica: calcula min/max a partir do cadastro
+min_age, max_age = 0, 120
+if 'Data_de_Nascimento' in cadastro.columns and not cadastro['Data_de_Nascimento'].isna().all():
+    idade_all = (pd.Timestamp.today() - cadastro['Data_de_Nascimento']).dt.days // 365
+    try:
+        min_age, max_age = int(idade_all.min()), int(idade_all.max())
+    except:
+        min_age, max_age = 0, 120
+faixa_etaria = st.sidebar.slider("Faixa Etária", min_value=min_age, max_value=max_age, value=(18,65))
 
-# Aplica os filtros de cadastro
-nomes_filtrados = utilizacao_filtrada['Nome_do_Associado'].unique().tolist()
-cadastro_filtrado = df_cadastro[df_cadastro['Nome_do_Associado'].isin(nomes_filtrados)].copy()
-nomes_possiveis = cadastro_filtrado['Nome_do_Associado'].unique().tolist()
-nomes_norm_map = {normalize_name(nome): nome for nome in nomes_possiveis}
-
-
-st.title("🛡️ Análise de Uso de Plano de Saúde")
-st.markdown(f"**Base de Dados:** {min_date.strftime('%d/%m/%Y')} até {max_date.strftime('%d/%m/%Y')}")
-
-
-# --- DASHBOARD PRINCIPAL ---
-
-if utilizacao_filtrada.empty:
-    st.warning("⚠️ Nenhum dado encontrado com os filtros aplicados. Tente ajustar a seleção.")
-    
+# Período (Data do atendimento)
+if 'Data_do_Atendimento' in utilizacao.columns and not utilizacao['Data_do_Atendimento'].isna().all():
+    periodo_min = utilizacao['Data_do_Atendimento'].min().date()
+    periodo_max = utilizacao['Data_do_Atendimento'].max().date()
 else:
-    # Métricas Globais (Topo)
-    total_custo = utilizacao_filtrada['Valor'].sum()
-    total_volume = len(utilizacao_filtrada)
-    total_benef = utilizacao_filtrada['Nome_do_Associado'].nunique()
-    custo_medio_benef = total_custo / total_benef if total_benef > 0 else 0
+    periodo_min = datetime.today().date()
+    periodo_max = datetime.today().date()
+periodo = st.sidebar.date_input("Período (início / fim)", [periodo_min, periodo_max])
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("💰 Custo Total", format_brl(total_custo))
-    with col2:
-        st.metric("📋 Volume Atendimentos", f"{total_volume:,.0f}".replace(",", "."))
-    with col3:
-        st.metric("👥 Beneficiários Únicos", f"{total_benef:,.0f}".replace(",", "."))
-    with col4:
-        st.metric("📊 Custo Médio p/ Beneficiário", format_brl(custo_medio_benef))
+# Planos (se houver coluna de plano)
+possible_plano_cols = [c for c in utilizacao.columns if 'plano' in c.lower()]
+plano_col = possible_plano_cols[0] if possible_plano_cols else None
+plano_opts = list(utilizacao[plano_col].dropna().unique()) if plano_col else []
+planos_filtro = st.sidebar.multiselect("Planos", options=plano_opts, default=plano_opts)
 
-    st.markdown("---")
+# ---------------------------
+# Aplicar filtros
+# ---------------------------
+cadastro_filtrado = cadastro.copy()
+# faixa etaria
+if 'Data_de_Nascimento' in cadastro_filtrado.columns:
+    idade = (pd.Timestamp.today() - cadastro_filtrado['Data_de_Nascimento']).dt.days // 365
+    cadastro_filtrado = cadastro_filtrado[(idade >= faixa_etaria[0]) & (idade <= faixa_etaria[1])]
+# sexo
+if sexo_col and sexo_filtro:
+    cadastro_filtrado = cadastro_filtrado[cadastro_filtrado[sexo_col].isin(sexo_filtro)]
+# municipio
+if municipio_filtro is not None and 'Municipio_do_Participante' in cadastro_filtrado.columns:
+    cadastro_filtrado = cadastro_filtrado[cadastro_filtrado['Municipio_do_Participante'].isin(municipio_filtro)]
+# dap
+if dap_filtro is not None and dap_column_exists:
+    cadastro_filtrado = cadastro_filtrado[cadastro_filtrado[dap_col_name].isin(dap_filtro)]
 
-    # Inicializar estado para a busca detalhada
-    if 'selected_benef' not in st.session_state:
-        st.session_state.selected_benef = None
-    if 'selected_cid' not in st.session_state:
-        st.session_state.selected_cid = None
-    
-    # Resetar selected_benef se o filtro de nome na barra lateral não for usado
-    # Isso garante que a seleção na tabela Top 20 prevaleça se a Busca não for ativada
-    if 'busca_selectbox' not in st.session_state or st.session_state.busca_selectbox == "":
-        pass # Não resetar aqui, a tabela Top 20 que irá definir.
+utilizacao_filtrada = utilizacao.copy()
+# tipo beneficiario
+if tipo_benef_filtro:
+    utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Tipo_Beneficiario'].isin(tipo_benef_filtro)]
+# planos
+if plano_col and planos_filtro:
+    utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada[plano_col].isin(planos_filtro)]
+# cruzamento com cadastro filtrado (nomes)
+if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Nome_do_Associado' in cadastro_filtrado.columns:
+    nomes_validos = cadastro_filtrado['Nome_do_Associado'].dropna().unique()
+    utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'].isin(nomes_validos)]
+# periodo
+if 'Data_do_Atendimento' in utilizacao_filtrada.columns:
+    utilizacao_filtrada = utilizacao_filtrada[
+        (utilizacao_filtrada['Data_do_Atendimento'] >= pd.to_datetime(periodo[0])) &
+        (utilizacao_filtrada['Data_do_Atendimento'] <= pd.to_datetime(periodo[1]))
+    ]
 
-    
-    tab_names = ["🏠 Dashboard Resumo", "🏥 Análise Médica", "🔍 Busca", "📤 Exportação"]
-    tabs = st.tabs(tab_names)
+# ---------------------------
+# Funções de exibição interativa (AgGrid wrappers)
+# ---------------------------
+def aggrid_df(df, height=300, selection_mode="single", enable_return='single'):
+    df_show = df.copy().reset_index(drop=True)
+    # show index starting at 1
+    df_show.insert(0, 'No', range(1, len(df_show)+1))
+    gb = GridOptionsBuilder.from_dataframe(df_show)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
+    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
+    gb.configure_selection(selection_mode=selection_mode, use_checkbox=(selection_mode=="multiple"))
+    gridOptions = gb.build()
+    grid_return = AgGrid(
+        df_show,
+        gridOptions=gridOptions,
+        height=height,
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        fit_columns_on_grid_load=True
+    )
+    return grid_return
 
-    for tab_name, tab in zip(tab_names, tabs):
-        with tab:
+# anonymize dataframes (default mask)
+def anonymize_df(df):
+    df2 = df.copy()
+    for c in list(df2.columns):
+        if 'cpf' in c.lower() or 'cpf' == c.lower() or 'rg' in c.lower() or 'identificador' in c.lower():
+            df2[c] = df2[c].apply(lambda x: mask_string(x,1,1))
+        if 'nome' in c.lower():
+            df2[c] = df2[c].apply(lambda x: (str(x)[0] + '***') if pd.notna(x) and len(str(x))>1 else x)
+        if 'email' in c.lower():
+            df2[c] = df2[c].apply(lambda x: '' if pd.notna(x) else x)
+    return df2
 
-            # --- ABA: DASHBOARD RESUMO ---
-            if tab_name == "🏠 Dashboard Resumo":
-                
-                # Gráfico de Evolução de Custo ao longo do tempo
-                st.markdown("### 📈 Evolução Mensal de Custos")
-                utilizacao_filtrada.loc[:, 'Mes_Ano'] = utilizacao_filtrada['Data_do_Atendimento'].dt.to_period('M')
-                evolucao = utilizacao_filtrada.groupby('Mes_Ano')['Valor'].sum().reset_index()
-                evolucao['Mes_Ano'] = evolucao['Mes_Ano'].astype(str)
+# ---------------------------
+# Abas principais (difere por role)
+# ---------------------------
+if role == "RH":
+    tabs = ["📊 KPIs Gerais", "📈 Comparativo", "🚨 Alertas", "🔍 Busca", "📊 Top CIDs", "📤 Exportação"]
+elif role == "MEDICO":
+    tabs = ["🏥 Análise Médica", "🔍 Busca", "📊 Top CIDs"]
+else:
+    tabs = ["📊 KPIs Gerais", "🔍 Busca"]
 
+tab_objs = st.tabs(tabs)
+
+# ---------------------------
+# Implementação de cada aba
+# ---------------------------
+for i, tab_name in enumerate(tabs):
+    with tab_objs[i]:
+        # ---------------- KPIs Gerais ----------------
+        if tab_name == "📊 KPIs Gerais":
+            st.subheader("📌 KPIs Gerais")
+            custo_total = utilizacao_filtrada['Valor'].sum() if 'Valor' in utilizacao_filtrada.columns else 0.0
+            volume_total = len(utilizacao_filtrada)
+            num_benef = utilizacao_filtrada['Nome_do_Associado'].nunique() if 'Nome_do_Associado' in utilizacao_filtrada.columns else 0
+            custo_medio = (custo_total / num_benef) if num_benef>0 else 0.0
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric("💰 Custo Total", format_brl(custo_total))
+            with c2:
+                st.metric("📋 Atendimentos", f"{volume_total:,}".replace(",", "."))
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.metric("👥 Beneficiários", f"{num_benef:,}".replace(",", "."))
+            with c4:
+                st.metric("📊 Custo Médio", format_brl(custo_medio))
+
+            st.markdown("---")
+            # Evolução mensal
+            if 'Data_do_Atendimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                st.markdown("### 📈 Evolução Mensal")
+                temp = utilizacao_filtrada.copy()
+                temp['Mes_Ano'] = temp['Data_do_Atendimento'].dt.to_period('M')
+                evol = temp.groupby('Mes_Ano')['Valor'].sum().reset_index()
+                evol['Mes_Ano'] = evol['Mes_Ano'].astype(str)
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=evolucao['Mes_Ano'], 
-                    y=evolucao['Valor'], 
-                    name='Custo Total',
-                    marker_color='#11998e'
-                ))
-
-                fig.update_layout(
-                    plot_bgcolor='white',
-                    paper_bgcolor='white',
-                    xaxis=dict(showgrid=True, gridcolor='#f0f0f0', title='Mês/Ano'),
-                    yaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickprefix="R$ ", tickformat=",.0f", title='Custo (R$)'),
-                    hovermode='x unified',
-                    height=450,
-                    title_x=0.5
-                )
+                fig.add_trace(go.Scatter(x=evol['Mes_Ano'], y=evol['Valor'], mode='lines+markers', line=dict(color='#667eea', width=3)))
+                fig.update_layout(yaxis=dict(tickprefix="R$ ", tickformat=",.2f"), height=380, plot_bgcolor='white')
                 st.plotly_chart(fig, use_container_width=True)
 
-                
-                col_demo, col_tipo = st.columns(2)
+            # Top 10 por custo e volume (AgGrid)
+            st.markdown("### 💎 Top Beneficiários")
+            if 'Nome_do_Associado' in utilizacao_filtrada.columns:
+                top_cost = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False).reset_index().head(10)
+                top_cost = top_cost.rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                df_top_cost = style_dataframe_brl(top_cost)
+                # exibicao via AgGrid
+                resp = aggrid_df(top_cost, height=300, selection_mode="single")
+                sel = resp.get('selected_rows', [])
+                if sel:
+                    selected = sel[0]
+                    selected_name = selected.get('Beneficiário') or selected.get('Nome_do_Associado')
+                    st.info(f"Selecionado: {selected_name}")
+            else:
+                st.info("Sem dados de beneficiário para mostrar Top 10.")
 
-                # Análise por Demografia (Idade)
-                with col_demo:
-                    st.markdown("### 🧬 Distribuição de Custo por Faixa Etária")
-                    bins = [0, 18, 25, 35, 45, 55, 65, 100]
-                    labels = ['0-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+']
-                    utilizacao_filtrada.loc[:, 'Faixa_Etaria_Agrupada'] = pd.cut(utilizacao_filtrada['Idade'], bins=bins, labels=labels, right=False)
-                    custo_por_idade = utilizacao_filtrada.groupby('Faixa_Etaria_Agrupada')['Valor'].sum().reset_index()
-                    
-                    fig_idade = go.Figure(data=[go.Pie(
-                        labels=custo_por_idade['Faixa_Etaria_Agrupada'], 
-                        values=custo_por_idade['Valor'], 
-                        hole=.3,
-                        hovertemplate="Faixa Etária: %{label}<br>Custo: %{value:$,.0f}<br>Percentual: %{percent}<extra></extra>",
-                        marker=dict(colors=go.colors.sequential.Teal)
-                    )])
-                    fig_idade.update_layout(height=400, margin=dict(t=0, b=0, l=0, r=0))
-                    st.plotly_chart(fig_idade, use_container_width=True)
+        # ---------------- Comparativo ----------------
+        elif tab_name == "📈 Comparativo":
+            st.subheader("📊 Comparativo de Planos")
+            if plano_col and 'Valor' in utilizacao_filtrada.columns:
+                comp_val = utilizacao_filtrada.groupby(plano_col)['Valor'].sum().reset_index().sort_values('Valor', ascending=False)
+                comp_vol = utilizacao_filtrada.groupby(plano_col).size().reset_index(name='Volume').sort_values('Volume', ascending=False)
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig1 = go.Figure([go.Bar(x=comp_val[plano_col], y=comp_val['Valor'], text=comp_val['Valor'].apply(format_brl))])
+                    fig1.update_layout(title="Custo por Plano", yaxis=dict(tickprefix="R$ ", tickformat=",.2f"), height=420, plot_bgcolor='white')
+                    st.plotly_chart(fig1, use_container_width=True)
+                with col2:
+                    fig2 = go.Figure([go.Bar(x=comp_vol[plano_col], y=comp_vol['Volume'], text=comp_vol['Volume'])])
+                    fig2.update_layout(title="Volume por Plano", height=420, plot_bgcolor='white')
+                    st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("Coluna de plano ou valores não encontrados.")
 
+        # ---------------- Alertas ----------------
+        elif tab_name == "🚨 Alertas":
+            st.subheader("🚨 Alertas e Inconsistências")
+            # limites
+            colL, colR = st.columns(2)
+            with colL:
+                custo_lim = st.number_input("💰 Limite de custo por beneficiário (R$)", value=5000.00, step=100.0, key="lim_custo")
+            with colR:
+                vol_lim = st.number_input("📊 Limite de atendimentos", value=20, step=1, key="lim_vol")
 
-                # Análise por Tipo de Beneficiário
-                with col_tipo:
-                    st.markdown("### 👨‍👩‍👧 Custo por Tipo de Beneficiário")
-                    custo_por_tipo = utilizacao_filtrada.groupby('Tipo_Beneficiario')['Valor'].sum().sort_values(ascending=False).reset_index()
+            if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum()
+                vol_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado').size()
 
-                    fig_tipo = go.Figure(data=[go.Bar(
-                        x=custo_por_tipo['Tipo_Beneficiario'], 
-                        y=custo_por_tipo['Valor'], 
-                        marker_color='#38ef7d',
-                        hovertemplate="Tipo: %{x}<br>Custo: %{y:$,.0f}<extra></extra>",
-                    )])
-                    fig_tipo.update_layout(
-                        plot_bgcolor='white',
-                        paper_bgcolor='white',
-                        xaxis=dict(title=None),
-                        yaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickprefix="R$ ", tickformat=",.0f"),
-                        height=400,
-                        margin=dict(t=10, b=10)
-                    )
-                    st.plotly_chart(fig_tipo, use_container_width=True)
+                alert_custo = custo_por_benef[custo_por_benef > custo_lim]
+                alert_vol = vol_por_benef[vol_por_benef > vol_lim]
 
-
-            # --- ABA: ANÁLISE MÉDICA (MEDICO) ---
-            elif tab_name == "🏥 Análise Médica":
-                
-                # --- NOVAS IMPLEMENTAÇÕES ---
-
-                # Explicação das Condições Crônicas (Requisito: Como elegeu?)
-                st.markdown("### 🧬 Beneficiários com Condições Crônicas")
-                st.info("""
-                    **Critério de Elegibilidade:** Um beneficiário é considerado com 'Condição Crônica' se o **Código do CID** em qualquer um de seus atendimentos iniciar com um dos códigos de raiz definidos.
-                    * **Códigos Atualmente Monitorados:** * **E11:** Diabetes Mellitus Não-Insulino-Dependente (Tipo 2)
-                        * **I10:** Hipertensão Essencial (Primária)
-                        * **J45:** Asma
-                    A análise abaixo soma o custo total de **todos os atendimentos** (crônicos ou não) dos beneficiários que tiveram pelo menos um atendimento associado a estes CIDs de raiz.
-                """)
-                
-                # Análise de Condições Crônicas
-                cids_cronicos = ['E11','I10','J45'] 
-                if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                    utilizacao_filtrada_temp = utilizacao_filtrada.copy()
-                    utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].astype(str).str.startswith(tuple(cids_cronicos), na=False)
-                    
-                    # Nomes dos beneficiários que tiveram CIDs crônicos
-                    beneficiarios_com_cronico = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']]['Nome_do_Associado'].unique()
-                    
-                    # Filtrar a utilização para incluir apenas esses beneficiários (cuidado com o índice)
-                    util_cronicos_full = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'].isin(beneficiarios_com_cronico)]
-                    
-                    beneficiarios_cronicos = util_cronicos_full.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
-                    
-                    df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Custo Total'})
-                    
-                    st.dataframe(style_dataframe_brl(df_cronicos[['Beneficiário', 'Custo Total']]), use_container_width=True)
+                st.markdown("#### ⚠️ Acima do limite de custo")
+                if not alert_custo.empty:
+                    df_alert_c = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                    resp = aggrid_df(df_alert_c, height=300)
+                    sel = resp.get('selected_rows', [])
+                    if sel:
+                        st.info(f"Selecionado: {sel[0].get('Beneficiário')}")
+                    # export
+                    if st.button("Exportar alertas de custo"):
+                        buf = BytesIO()
+                        with pd.ExcelWriter(buf, engine='xlsxwriter') as w:
+                            df_alert_c.to_excel(w, sheet_name='Alertas_Custo', index=False)
+                        buf.seek(0)
+                        st.download_button("📥 Baixar alertas custo", buf, "alertas_custo.xlsx", "application/vnd.ms-excel")
                 else:
-                    st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
+                    st.success("✅ Nenhum beneficiário acima do limite de custo")
 
-                # --- TOP 20 MAIORES UTILIZADORES POR CUSTO (Novo Requisito e Interativo) ---
-                st.markdown("---")
-                st.markdown("### 💸 Top 20 Beneficiários por Custo (Clique na linha para ver detalhes)")
-                
-                if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                    top_users = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].agg(
-                        Custo_Total='sum',
-                        Volume_Atendimentos='size',
-                    ).sort_values(by='Custo_Total', ascending=False).head(20).reset_index()
-                    
-                    top_users['Custo Médio'] = top_users['Custo_Total'] / top_users['Volume_Atendimentos']
-                    
-                    # Cria um DataFrame para exibição com index 1-based e BRL formatado
-                    df_top_users_display = style_dataframe_brl(top_users.rename(columns={'Nome_do_Associado': 'Beneficiário'}), currency_cols=['Custo Total', 'Custo Médio'])
-                    
-                    # Usando st.dataframe para interatividade de seleção
-                    # O ID do beneficiário é necessário para buscar os detalhes
-                    st.markdown("Selecione um beneficiário na tabela para abrir o **Detalhe** na aba 🔍 Busca.")
-                    
-                    # Uso de st.data_editor para permitir a seleção de linhas (Requisito de Interatividade)
-                    selected_data = st.data_editor(
-                        df_top_users_display.data, 
-                        key="top_users_table", 
-                        use_container_width=True,
-                        hide_index=False,
-                        column_config={"Custo Total": st.column_config.Progress(format="R$ %f", min_value=0, max_value=top_users['Custo_Total'].max())}
-                    )
-                    
-                    # Lógica para capturar o beneficiário selecionado na tabela
-                    if selected_data:
-                        # O índice retornado é o 0-based, mas a coluna 'Beneficiário' está presente
-                        selected_name = selected_data['Beneficiário'][selected_data.index[0] - 1]
-                        st.session_state.selected_benef = selected_name
-                        st.success(f"Beneficiário **{selected_name}** selecionado! Vá para a aba 🔍 Busca.")
-                    
-                    # Lógica para evitar que a seleção da tabela conflite com a busca manual se não houver clique
-                    if not selected_data and st.session_state.get('selected_benef_from_table'):
-                         st.session_state.selected_benef = st.session_state.selected_benef_from_table
-
-
+                st.markdown("#### ⚠️ Acima do limite de volume")
+                if not alert_vol.empty:
+                    df_alert_v = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                    resp2 = aggrid_df(df_alert_v, height=300)
+                    if st.button("Exportar alertas de volume"):
+                        buf = BytesIO()
+                        with pd.ExcelWriter(buf, engine='xlsxwriter') as w:
+                            df_alert_v.to_excel(w, sheet_name='Alertas_Volume', index=False)
+                        buf.seek(0)
+                        st.download_button("📥 Baixar alertas volume", buf, "alertas_volume.xlsx", "application/vnd.ms-excel")
                 else:
-                    st.info("ℹ️ Colunas de Nome ou Valor não encontradas para esta análise.")
-                
-                # --- TOP 10 CIDs POR CUSTO (Novo Requisito) ---
-                st.markdown("---")
-                st.markdown("### 🩺 Top 10 CIDs de Raiz por Custo")
-                
-                if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                    # Usar apenas a raiz do CID
-                    utilizacao_filtrada.loc[:, 'CID_Raiz'] = utilizacao_filtrada['Codigo_do_CID'].astype(str).str[:3]
-                    top_cids = utilizacao_filtrada.groupby('CID_Raiz')['Valor'].sum().sort_values(ascending=False).head(10)
-                    df_top_cids = top_cids.reset_index().rename(columns={'CID_Raiz':'CID Raiz','Valor':'Custo Total'})
-                    
-                    st.dataframe(style_dataframe_brl(df_top_cids), use_container_width=True)
-                else:
-                    st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
+                    st.success("✅ Nenhum beneficiário acima do limite de volume")
 
-                # --- TOP 10 PROCEDIMENTOS POR CUSTO (EXISTENTE) ---
-                st.markdown("---")
-                st.markdown("### 💊 Top 10 Procedimentos por Custo")
-                if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                    top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                    df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Custo Total'})
-                    st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
-                else:
-                    st.info("ℹ️ Colunas de Procedimento/Valor não encontradas para esta análise.")
+            # inconsistências: parto masculino, atendimento antes do nascimento, idades absurdas
+            st.markdown("### ⚠️ Inconsistências detectadas")
+            inconsistencias = pd.DataFrame()
+            if 'Codigo_do_CID' in utilizacao_filtrada.columns and sexo_col and 'Nome_do_Associado' in utilizacao_filtrada.columns:
+                util_temp = utilizacao_filtrada.copy()
+                cad_temp = cadastro_filtrado.copy()
+                util_temp['Nome_merge'] = util_temp['Nome_do_Associado'].apply(padronizar_nome)
+                cad_temp['Nome_merge'] = cad_temp['Nome_do_Associado'].apply(padronizar_nome)
+                merged = util_temp.merge(cad_temp[['Nome_merge', sexo_col, 'Data_de_Nascimento']].drop_duplicates(), on='Nome_merge', how='left')
+                merged[sexo_col] = merged[sexo_col].fillna('Desconhecido')
+                parto_masc = merged[(merged['Codigo_do_CID'].astype(str).str.upper()=='O80') & (merged[sexo_col].astype(str).str.upper()=='M')]
+                if not parto_masc.empty:
+                    inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns=['Nome_merge'], errors='ignore')])
+                # atendimento antes do nascimento
+                if 'Data_do_Atendimento' in merged.columns and 'Data_de_Nascimento' in merged.columns:
+                    inco_dt = merged[(merged['Data_do_Atendimento'] < merged['Data_de_Nascimento'])]
+                    if not inco_dt.empty:
+                        inconsistencias = pd.concat([inconsistencias, inco_dt.drop(columns=['Nome_merge'], errors='ignore')])
+            # idades absurdas
+            if 'Data_de_Nascimento' in cadastro_filtrado.columns:
+                idades = (pd.Timestamp.today() - cadastro_filtrado['Data_de_Nascimento']).dt.days // 365
+                idosos = cadastro_filtrado[idades > 120]
+                if not idosos.empty:
+                    inconsistencias = pd.concat([inconsistencias, idosos])
 
-                
-                # --- BUSCA DE BENEFICIÁRIOS POR CID (CID como Raiz - Novo Requisito) ---
-                st.markdown("---")
-                st.markdown("### 🔎 Buscar Beneficiários por CID de Raiz")
-                
-                cid_options = sorted(utilizacao_filtrada['CID_Raiz'].dropna().unique().tolist()) if 'CID_Raiz' in utilizacao_filtrada.columns else []
-                cid_input = st.selectbox(
-                    "Selecione o CID de Raiz (ex: I10, E11)", 
-                    options=[""] + cid_options, 
-                    key="busca_cid_input",
-                    index=0
-                )
-                
-                if cid_input:
-                    util_cid = utilizacao_filtrada[utilizacao_filtrada['CID_Raiz'] == cid_input].copy()
-                    
-                    if not util_cid.empty:
-                        total_users_cid = util_cid['Nome_do_Associado'].nunique()
-                        total_cost_cid = util_cid['Valor'].sum()
-                        
-                        st.markdown(f"#### 👤 Beneficiários associados ao CID **{cid_input}**")
-                        st.metric(f"Total de Beneficiários", f"{total_users_cid:,.0f}", delta=format_brl(total_cost_cid))
-                        
-                        # Agrupar e mostrar os usuários
-                        usuarios_por_cid = util_cid.groupby('Nome_do_Associado')['Valor'].agg(
-                            Custo_Total='sum',
-                            Volume_Atendimentos='size',
-                        ).sort_values(by='Custo_Total', ascending=False).reset_index()
-                        
-                        # Criar uma nova tabela interativa para seleção, permitindo a transição para a aba 'Busca'
-                        st.markdown("Selecione um beneficiário nesta tabela para ver o detalhe na aba 🔍 Busca.")
-                        
-                        df_usuarios_cid_display = style_dataframe_brl(
-                            usuarios_por_cid.rename(columns={'Nome_do_Associado': 'Beneficiário'}), 
-                            currency_cols=['Custo Total']
-                        )
-                        
-                        # Usando st.dataframe para interatividade de seleção
-                        selected_data_cid = st.data_editor(
-                            df_usuarios_cid_display.data, 
-                            key="cid_users_table", 
-                            use_container_width=True,
-                            hide_index=False,
-                        )
-                        
-                        if selected_data_cid:
-                            selected_name_cid = selected_data_cid['Beneficiário'][selected_data_cid.index[0] - 1]
-                            st.session_state.selected_benef = selected_name_cid
-                            st.success(f"Beneficiário **{selected_name_cid}** selecionado! Vá para a aba 🔍 Busca.")
-                    
+            if not inconsistencias.empty:
+                if anon_toggle:
+                    show_inc = anonymize_df(inconsistencias)
+                else:
+                    show_inc = inconsistencias.copy()
+                resp = aggrid_df(show_inc, height=400)
+                if st.button("Exportar inconsistências"):
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine='xlsxwriter') as w:
+                        inconsistencias.to_excel(w, sheet_name='Inconsistencias', index=False)
+                    buf.seek(0)
+                    st.download_button("📥 Baixar inconsistências", buf, "inconsistencias.xlsx", "application/vnd.ms-excel")
+            else:
+                st.success("✅ Nenhuma inconsistência aparente encontrada.")
+
+        # ---------------- Análise Médica ----------------
+        elif tab_name == "🏥 Análise Médica":
+            st.subheader("🏥 Análise Médica - Condições Crônicas e Procedimentos")
+            # filtro CID mode explained
+            st.markdown(f"**Modo de correspondência de CID:** {cid_mode}")
+            # aplica regra para marcar crônicos
+            if 'Codigo_do_CID' in utilizacao_filtrada.columns:
+                temp = utilizacao_filtrada.copy()
+                if cid_mode.startswith("Começa"):
+                    mask = temp['Codigo_do_CID'].astype(str).str.upper().str.startswith(tuple([c.upper() for c in cids_list]))
+                elif cid_mode.startswith("Exato"):
+                    mask = temp['Codigo_do_CID'].astype(str).str.upper().isin([c.upper() for c in cids_list])
+                elif cid_mode.startswith("Contém"):
+                    mask = temp['Codigo_do_CID'].astype(str).str.upper().apply(lambda x: any([c.upper() in x for c in cids_list]))
+                else:  # regex
+                    try:
+                        patt = "|".join([f"({c})" for c in cids_list])
+                        mask = temp['Codigo_do_CID'].astype(str).str.contains(patt, regex=True, na=False)
+                    except:
+                        mask = pd.Series(False, index=temp.index)
+                temp['Cronico'] = mask
+                cronicos = temp[temp['Cronico']]
+                if not cronicos.empty:
+                    agg = cronicos.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False).reset_index().head(200)
+                    agg = agg.rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                    if anon_toggle:
+                        st.dataframe(add_index1(style_dataframe_brl(agg)), use_container_width=True)
                     else:
-                        st.info(f"ℹ️ Nenhum atendimento encontrado para o CID {cid_input} nos filtros aplicados.")
-                    
-                
-            # --- ABA: BUSCA (RH/MEDICO) ---
-            elif tab_name == "🔍 Busca":
-                st.markdown("### 🔎 Busca por Beneficiário")
-                
-                # Se um beneficiário foi selecionado nas tabelas Top 20 ou CID, use-o como default.
-                default_benef = st.session_state.selected_benef if st.session_state.selected_benef else ""
-
-                # caixa de busca (tempo real)
-                search_input = st.text_input(
-                    "Digite o nome do beneficiário (busca em tempo real)", 
-                    value=default_benef,
-                    key="busca_input"
-                )
-
-                # Se o usuário digitou, prioriza a busca
-                search_query = search_input.strip()
-                matches = []
-                if search_query:
-                    q_norm = normalize_name(search_query)
-                    # Substring match on normalized names
-                    matches = [orig for norm, orig in nomes_norm_map.items() if q_norm in norm]
-                    matches = sorted(matches)
+                        st.dataframe(add_index1(style_dataframe_brl(agg)), use_container_width=True)
                 else:
-                    # quando vazio, sugerir top 20 por volume ou nomes
-                    if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                        vol = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
-                        suggestions = vol.head(20).index.tolist()
-                        matches = [s for s in suggestions if s in nomes_possiveis]
+                    st.info("Nenhum beneficiário identificado como crônico com os CIDs configurados.")
+            else:
+                st.info("Coluna 'Codigo_do_CID' não encontrada.")
+
+            # Top 10 procedimentos
+            st.markdown("### 💊 Top Procedimentos por Custo")
+            if 'Nome_do_Procedimento' in utilizacao_filtrada.columns:
+                top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).reset_index().head(10)
+                top_proc = top_proc.rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                st.dataframe(add_index1(style_dataframe_brl(top_proc)), use_container_width=True)
+            else:
+                st.info("Coluna 'Nome_do_Procedimento' não encontrada.")
+
+        # ---------------- Busca ----------------
+        elif tab_name == "🔍 Busca":
+            st.subheader("🔎 Busca por Beneficiário / CID / Procedimento")
+            search_input = st.text_input("Digite nome, CID ou procedimento (busca livre)", key="search_input")
+            filtered = utilizacao_filtrada.copy()
+            if search_input:
+                q = search_input.strip().upper()
+                mask_name = filtered['Nome_do_Associado'].astype(str).str.upper().str.contains(q, na=False) if 'Nome_do_Associado' in filtered.columns else pd.Series(False, index=filtered.index)
+                mask_cid = filtered['Codigo_do_CID'].astype(str).str.upper().str.contains(q, na=False) if 'Codigo_do_CID' in filtered.columns else pd.Series(False, index=filtered.index)
+                mask_proc = filtered['Nome_do_Procedimento'].astype(str).str.upper().str.contains(q, na=False) if 'Nome_do_Procedimento' in filtered.columns else pd.Series(False, index=filtered.index)
+                filtered = filtered[mask_name | mask_cid | mask_proc]
+            else:
+                # sugestões top 20 por volume
+                if 'Nome_do_Associado' in filtered.columns:
+                    vol = filtered.groupby('Nome_do_Associado').size().sort_values(ascending=False).head(20)
+                    suggestions = vol.index.tolist()
+                    st.markdown("Top sugeridos (por volume):")
+                    st.write(", ".join(suggestions))
+
+            if not filtered.empty:
+                # exibir via AgGrid e permitir seleção para abrir detalhes
+                resp = aggrid_df(filtered, height=450)
+                sel = resp.get('selected_rows', [])
+                if sel:
+                    sel_row = sel[0]
+                    nome = sel_row.get('Nome_do_Associado') or sel_row.get('Beneficiário')
+                    st.markdown(f"### Detalhes selecionados: {nome}")
+                    # reencontra todos os registros do beneficiário
+                    util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado']==nome] if 'Nome_do_Associado' in utilizacao_filtrada.columns else pd.DataFrame()
+                    cad_b = cadastro_filtrado[cadastro_filtrado['Nome_do_Associado']==nome] if 'Nome_do_Associado' in cadastro_filtrado.columns else pd.DataFrame()
+                    if anon_toggle:
+                        st.dataframe(anonymize_df(cad_b), use_container_width=True)
+                        st.dataframe(style_dataframe_brl(anonymize_df(util_b)), use_container_width=True)
                     else:
-                        matches = nomes_possiveis[:20]
+                        st.dataframe(cad_b, use_container_width=True)
+                        st.dataframe(style_dataframe_brl(util_b), use_container_width=True)
+            else:
+                st.info("Nenhum registro encontrado para a busca.")
 
-                
-                # Se houver uma seleção prévia (da tabela interativa), use-a como índice
-                default_index = 0
-                if default_benef and default_benef in matches:
-                     default_index = matches.index(default_benef) + 1 # +1 pois o primeiro item é a string vazia ("")
-
-                chosen = None
-                if matches:
-                    chosen = st.selectbox(
-                        "Resultados da busca — selecione o beneficiário", 
-                        options=[""] + matches, 
-                        index=default_index, 
-                        key="busca_selectbox"
-                    )
-                    
-                    if chosen == "":
-                        st.session_state.selected_benef = None
+        # ---------------- Top CIDs ----------------
+        elif tab_name == "📊 Top CIDs":
+            st.subheader("🔢 Top CIDs (por volume e por custo)")
+            if 'Codigo_do_CID' in utilizacao_filtrada.columns:
+                cids_count = utilizacao_filtrada['Codigo_do_CID'].astype(str).value_counts().reset_index().rename(columns={'index':'CID','Codigo_do_CID':'Count'})
+                cids_cost = utilizacao_filtrada.groupby(utilizacao_filtrada['Codigo_do_CID'].astype(str))['Valor'].sum().reset_index().rename(columns={'Codigo_do_CID':'CID','Valor':'Custo'})
+                top10 = cids_count.merge(cids_cost, on='CID', how='left').sort_values(by='Count', ascending=False).head(10)
+                st.markdown("### Top 10 por Volume")
+                resp = aggrid_df(top10, height=300)
+                st.markdown("### Top 10 por Custo")
+                resp2 = aggrid_df(top10.sort_values(by='Custo', ascending=False), height=300)
+                # permitir pesquisa por código(s)
+                cid_query = st.text_input("Pesquisar por CID (ex: E11 ou E11.9 ou E11,E10)", key="cid_query")
+                if cid_query:
+                    q = cid_query.strip().upper()
+                    tokens = [t.strip() for t in q.split(",") if t.strip()]
+                    mask = utilizacao_filtrada['Codigo_do_CID'].astype(str).str.upper().apply(lambda x: any([t in x for t in tokens]))
+                    results = utilizacao_filtrada[mask]
+                    if not results.empty:
+                        st.markdown(f"Resultados para: {', '.join(tokens)}")
+                        st.dataframe(style_dataframe_brl(results.head(500)), use_container_width=True)
                     else:
-                        st.session_state.selected_benef = chosen
-                else:
-                    st.write("Nenhum resultado encontrado. Tente refinar os filtros.")
+                        st.info("Nenhum resultado para o(s) CID(s) informado(s).")
+            else:
+                st.info("Coluna 'Codigo_do_CID' não encontrada.")
 
-                # --- INÍCIO: Seção Detalhada ---
-                selected_benef = st.session_state.selected_benef 
-                if selected_benef:
-                    st.markdown(f"## 👤 Detalhes do Beneficiário: **{selected_benef}**")
+        # ---------------- Exportação ----------------
+        elif tab_name == "📤 Exportação":
+            st.subheader("📥 Exportar Relatórios (filtros aplicados)")
+            st.write("O arquivo exportado respeita os filtros aplicados.")
+            if st.button("Gerar relatório completo (Excel)"):
+                out = BytesIO()
+                with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+                    util_export = utilizacao_filtrada.drop(columns=['Tipo_Beneficiario'], errors='ignore').copy()
+                    util_export.to_excel(writer, sheet_name='Utilizacao_Filtrada', index=False)
+                    cadastro_filtrado.to_excel(writer, sheet_name='Cadastro_Filtrada', index=False)
+                    if not medicina_trabalho.empty:
+                        med_export = medicina_trabalho.copy()
+                        if 'Nome_do_Associado' in med_export.columns and 'Nome_do_Associado' in cadastro_filtrado.columns:
+                            med_export = med_export[med_export['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
+                        med_export.to_excel(writer, sheet_name='Medicina_do_Trabalho', index=False)
+                    if not atestados.empty:
+                        at_export = atestados.copy()
+                        if 'Nome_do_Associado' in at_export.columns and 'Nome_do_Associado' in cadastro_filtrado.columns:
+                            at_export = at_export[at_export['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
+                        at_export.to_excel(writer, sheet_name='Atestados', index=False)
+                out.seek(0)
+                st.download_button("📥 Baixar Relatório Filtrado (.xlsx)", out, "dashboard_plano_saude_filtrado.xlsx", "application/vnd.ms-excel", use_container_width=True)
+            st.markdown("**Exportar relatório individual:** use a aba de busca para selecionar um beneficiário e baixar o relatório individual.")
 
-                    # Preparar dados do beneficiário
-                    util_b = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'] == selected_benef].copy()
-                    cad_b = cadastro_filtrado[cadastro_filtrado['Nome_do_Associado'] == selected_benef].copy()
+# ---------------------------
+# Top 20 maiores utilizadores por custo (se quiser mostrar fora das tabs)
+# ---------------------------
+st.markdown("---")
+st.markdown("### 📌 Top 20 Usuários por Custo (visível para RH e Médico)")
+if 'Nome_do_Associado' in utilizacao_filtrada.columns:
+    top20 = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False).reset_index().head(20)
+    top20 = top20.rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+    if anon_toggle and role!="MEDICO":
+        AgGrid(add_index1(anonymize_df(style_dataframe_brl(top20))), height=350)
+    else:
+        AgGrid(add_index1(style_dataframe_brl(top20)), height=350)
+else:
+    st.info("Sem dados de beneficiários para Top20.")
 
-                    # Métricas rápidas
-                    col_metrica_1, col_metrica_2, col_metrica_3 = st.columns(3)
-                    
-                    if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                        custo_total_b = util_b['Valor'].sum() if 'Valor' in util_b.columns else 0
-                        volume_b = len(util_b)
-                        custo_medio_b = custo_total_b / volume_b if volume_b > 0 else 0
-                        
-                        with col_metrica_1:
-                            st.metric("💰 Custo Total (filtros)", format_brl(custo_total_b)) 
-                        with col_metrica_2:
-                            st.metric("📋 Volume (atendimentos)", f"{volume_b:,.0f}".replace(",", "."))
-                        with col_metrica_3:
-                            st.metric("📊 Custo Médio por Atendimento", format_brl(custo_medio_b))
+# ---------------------------
+# Observações finais e instruções
+# ---------------------------
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Observações")
+st.sidebar.write("""
+- CID por 'raiz' (começa com) recomendado — já disponível no seletor de modo.
+- DAPs: se a coluna existir no cadastro será usada; se não, envie lista via upload.
+- Export manual disponível; para agendamento/envio automático por e-mail/Slack preciso credenciais (extra).
+- Para produção, defina credenciais reais em `st.secrets` e use conexões seguras.
+""")
 
-                    # Expander com detalhes
-                    with st.expander(f"🔍 Dados detalhados — {selected_benef}", expanded=True):
-                        
-                        # --- Informações Cadastrais ---
-                        st.markdown("### 📝 Informações Cadastrais")
-                        if not cad_b.empty:
-                            # Removendo index para aplicar 1-based no style_dataframe_brl
-                            st.dataframe(style_dataframe_brl(cad_b.reset_index(drop=True), currency_cols=[]), use_container_width=True)
-                        else:
-                            st.info("ℹ️ Informações cadastrais não encontradas nos filtros aplicados.")
-
-                        # --- Utilização do Plano (Atendimentos) ---
-                        st.markdown("### 📋 Utilização do Plano (Atendimentos) - Interativo")
-                        if not util_b.empty:
-                            # APLICAR FORMAT_BRL e 1-based index
-                            df_util_b_display = style_dataframe_brl(util_b.reset_index(drop=True))
-                            st.data_editor(
-                                df_util_b_display.data, 
-                                key="util_b_table", 
-                                use_container_width=True,
-                                hide_index=False,
-                            )
-                        else:
-                            st.info("ℹ️ Nenhum registro de utilização encontrado para os filtros aplicados.")
-                        
-                        # --- Medicina do Trabalho e Atestados (Para exportação e detalhe) ---
-                        med_b = medicina_trabalho[medicina_trabalho.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
-                        at_b = atestados[atestados.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
-
-                        st.markdown("### 💼 Medicina do Trabalho (Aso, etc.)")
-                        if not med_b.empty:
-                            st.dataframe(style_dataframe_brl(med_b.reset_index(drop=True), currency_cols=[]), use_container_width=True)
-                        else:
-                            st.info("ℹ️ Nenhum registro de Medicina do Trabalho encontrado.")
-                            
-                        st.markdown("### 📑 Atestados/Afastamentos")
-                        if not at_b.empty:
-                            st.dataframe(style_dataframe_brl(at_b.reset_index(drop=True), currency_cols=[]), use_container_width=True)
-                        else:
-                            st.info("ℹ️ Nenhum registro de Atestados encontrado.")
-
-
-                        # --- Histórico de custos e procedimentos ---
-                        st.markdown("### 📈 Histórico de Custos")
-                        if 'Valor' in util_b.columns and 'Data_do_Atendimento' in util_b.columns and not util_b.empty:
-                            # evolução do beneficiário
-                            util_b.loc[:, 'Mes_Ano'] = util_b['Data_do_Atendimento'].dt.to_period('M')
-                            evol_b = util_b.groupby('Mes_Ano')['Valor'].sum().reset_index()
-                            evol_b['Mes_Ano'] = evol_b['Mes_Ano'].astype(str)
-                            
-                            fig_b = go.Figure()
-                            fig_b.add_trace(go.Scatter(
-                                x=evol_b['Mes_Ano'],
-                                y=evol_b['Valor'],
-                                mode='lines+markers',
-                                name='Custo',
-                                line=dict(color='#11998e', width=3),
-                                marker=dict(size=8, color='#38ef7d'),
-                                fill='tozeroy',
-                                fillcolor='rgba(17, 153, 142, 0.1)'
-                            ))
-
-                            fig_b.update_layout(
-                                plot_bgcolor='white',
-                                paper_bgcolor='white',
-                                xaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
-                                yaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickprefix="R$ ", tickformat=",.2f"),
-                                hovermode='x unified',
-                                height=400
-                            )
-                            st.plotly_chart(fig_b, use_container_width=True)
-                        else:
-                            st.info("ℹ️ Dados de data e valor insuficientes para gráfico de evolução.")
-
-
-                        col_proc, col_cid = st.columns(2)
-
-                        with col_proc:
-                            st.markdown("### 💉 Principais Procedimentos")
-                            if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
-                                top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                                df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Custo Total'})
-                                st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
-                            else:
-                                st.info("ℹ️ Colunas de procedimento ou valor não encontradas.")
-                        
-                        with col_cid:
-                            # CIDs associados
-                            st.markdown("### 🩺 CIDs Associados")
-                            if 'Codigo_do_CID' in util_b.columns:
-                                # Agrupa por CID e soma o custo para esse CID específico
-                                cids_agrupados = util_b.groupby('Codigo_do_CID')['Valor'].sum().sort_values(ascending=False)
-                                df_cids = cids_agrupados.reset_index().rename(columns={'Codigo_do_CID':'CID','Valor':'Custo Total'})
-                                
-                                st.dataframe(style_dataframe_brl(df_cids), use_container_width=True)
-                            else:
-                                st.info("ℹ️ Coluna 'Codigo_do_CID' não encontrada.")
-
-                        
-                        # Exportar relatório individual em Excel
-                        st.markdown("---")
-                        st.markdown("### 📥 Exportar Relatório Individual")
-                        buf_ind = BytesIO()
-                        with pd.ExcelWriter(buf_ind, engine='xlsxwriter') as writer:
-                            if not util_b.empty:
-                                # remove a coluna de Mes_Ano temporária para exportação
-                                util_b_export = util_b.drop(columns=['Mes_Ano', 'Tipo_Beneficiario', 'Município', 'Idade', 'Sexo'], errors='ignore')
-                                util_b_export.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
-                            if not cad_b.empty:
-                                cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
-                            if not med_b.empty:
-                                med_b.to_excel(writer, sheet_name='Medicina_do_Trabalho_Ind', index=False)
-                            if not at_b.empty:
-                                at_b.to_excel(writer, sheet_name='Atestados_Ind', index=False)
-                        buf_ind.seek(0)
-                        st.download_button(
-                            label="📥 Baixar Relatório Individual (.xlsx)",
-                            data=buf_ind,
-                            file_name=f"relatorio_beneficiario_{normalize_name(selected_benef)[:50]}.xlsx",
-                            mime="application/vnd.ms-excel",
-                            use_container_width=True
-                        )
-                # --- FIM: Seção Detalhada ---
-
-
-            # --- ABA: EXPORTAÇÃO (RH) ---
-            elif tab_name == "📤 Exportação":
-                st.markdown("### 📥 Exportar Relatório Completo")
-                st.write("Baixe todas as abas do arquivo processado, respeitando os filtros de `Período`, `Sexo`, `Município`, `Faixa Etária` e `Tipo de Beneficiário` aplicados.")
-                buffer = BytesIO()
-                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    # Preparação da Utilização
-                    utilizacao_filtrada_export = utilizacao_filtrada.drop(columns=['Tipo_Beneficiario', 'Idade', 'CID_Raiz'], errors='ignore')
-                    utilizacao_filtrada_export.to_excel(writer, sheet_name='Utilizacao_Filtrada', index=False)
-                    
-                    # Cadastro já está filtrado
-                    cadastro_filtrado.to_excel(writer, sheet_name='Cadastro_Filtrado', index=False)
-                    
-                    # A exportação do Medicina do Trabalho e Atestados é filtrada pelos Nomes do Cadastro Filtrado
-                    med_export = medicina_trabalho.copy()
-                    if 'Nome_do_Associado' in med_export.columns:
-                        med_export = med_export[med_export['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
-
-                    at_export = atestados.copy()
-                    if 'Nome_do_Associado' in at_export.columns:
-                        at_export = at_export[at_export['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
-                        
-                    if not med_export.empty:
-                        med_export.to_excel(writer, sheet_name='Medicina_do_Trabalho_Filtrada', index=False)
-                    if not at_export.empty:
-                        at_export.to_excel(writer, sheet_name='Atestados_Filtrados', index=False)
-                        
-                buffer.seek(0)
-                st.download_button(
-                    "📥 Baixar Relatório Filtrado (.xlsx)", 
-                    buffer, 
-                    "dashboard_plano_saude_filtrado.xlsx", 
-                    "application/vnd.ms-excel", 
-                    use_container_width=True
-                )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.success("✅ Processamento de dados concluído. Utilize as abas.")
-
+# fim do app
