@@ -568,7 +568,7 @@ if st.session_state.logged_in:
                             # CORREÇÃO: Removemos 'drop=True'
                             df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                             df_custo.insert(0, 'Ranking', range(1, 1 + len(df_custo)))
-                            st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400)
+                            st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400, hide_index=True)
                             
                     with col2_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns:
@@ -577,7 +577,7 @@ if st.session_state.logged_in:
                             # CORREÇÃO: Removemos 'drop=True'
                             df_volume = top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                             df_volume.insert(0, 'Ranking', range(1, 1 + len(df_volume)))
-                            st.dataframe(style_dataframe_brl(df_volume, value_cols=[]), use_container_width=True, height=400)
+                            st.dataframe(style_dataframe_brl(df_volume, value_cols=[]), use_container_width=True, height=400, hide_index=True)
 
                 # --- ABA: COMPARATIVO (RH) ---
                 elif tab_name == "📈 Comparativo":
@@ -660,7 +660,7 @@ if st.session_state.logged_in:
                                 df_alert_custo = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                                 df_alert_custo.insert(0, 'Ranking', range(1, 1 + len(df_alert_custo)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl
-                                st.dataframe(style_dataframe_brl(df_alert_custo), use_container_width=True)
+                                st.dataframe(style_dataframe_brl(df_alert_custo), use_container_width=True, hide_index=True)
                             else:
                                 st.success("✅ Nenhum alerta de custo")
 
@@ -671,7 +671,7 @@ if st.session_state.logged_in:
                                 df_alert_vol = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                                 df_alert_vol.insert(0, 'Ranking', range(1, 1 + len(df_alert_vol)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
-                                st.dataframe(style_dataframe_brl(df_alert_vol, value_cols=[]), use_container_width=True)
+                                st.dataframe(style_dataframe_brl(df_alert_vol, value_cols=[]), use_container_width=True, hide_index=True)
                             else:
                                 st.success("✅ Nenhum alerta de volume")
 
@@ -708,7 +708,7 @@ if st.session_state.logged_in:
                         inconsistencias = inconsistencias.reset_index(drop=True)
                         inconsistencias.insert(0, 'Linha', range(1, 1 + len(inconsistencias)))
                         # Aplicar formatação para a coluna 'Valor' nas inconsistências
-                        st.dataframe(style_dataframe_brl(inconsistencias), use_container_width=True)
+                        st.dataframe(style_dataframe_brl(inconsistencias), use_container_width=True, hide_index=True)
                     else:
                         st.success("✅ Nenhuma inconsistência lógica (aparente) encontrada.")
 
@@ -725,7 +725,7 @@ if st.session_state.logged_in:
                         # CORREÇÃO: Removemos 'drop=True'
                         df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                         df_cronicos.insert(0, 'Ranking', range(1, 1 + len(df_cronicos)))
-                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True)
+                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True,hide_index=True)
                     else:
                         st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
 
@@ -735,7 +735,7 @@ if st.session_state.logged_in:
                         # CORREÇÃO: Removemos 'drop=True'
                         df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                         df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
-                        st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
+                        st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True,hide_index=True)
                     else:
                         st.info("ℹ️ Colunas de Procedimento/Valor não encontradas para esta análise.")
 
@@ -805,7 +805,7 @@ if st.session_state.logged_in:
                                 # Este reset_index(drop=True) está ok, pois cad_b já é um DataFrame
                                 cad_b_display = cad_b.reset_index(drop=True)
                                 cad_b_display.insert(0, 'ID', range(1, 1 + len(cad_b_display)))
-                                st.dataframe(cad_b_display, use_container_width=True)
+                                st.dataframe(cad_b_display, use_container_width=True,hide_index=True)
                             else:
                                 st.info("ℹ️ Informações cadastrais não encontradas nos filtros aplicados.")
 
@@ -815,7 +815,7 @@ if st.session_state.logged_in:
                                 util_b_display = util_b.reset_index(drop=True)
                                 util_b_display.insert(0, 'ID_Registro', range(1, 1 + len(util_b_display)))
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
-                                st.dataframe(style_dataframe_brl(util_b_display), use_container_width=True)
+                                st.dataframe(style_dataframe_brl(util_b_display), use_container_width=True,hide_index=True)
                             else:
                                 st.info("ℹ️ Nenhum registro de utilização encontrado para os filtros aplicados.")
 
@@ -862,7 +862,7 @@ if st.session_state.logged_in:
                                     df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                                     df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                                     # USANDO A NOVA FUNÇÃO style_dataframe_brl
-                                    st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
+                                    st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True,hide_index=True)
                                 else:
                                     st.info("ℹ️ Colunas de procedimento ou valor não encontradas.")
                             
