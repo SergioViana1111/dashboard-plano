@@ -726,11 +726,20 @@ if st.session_state.logged_in:
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
                         # Verifica se o CID começa com um dos códigos crônicos
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].astype(str).str.startswith(tuple(cids_cronicos))
-                        beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                        # CORREÇÃO: Removemos 'drop=True'
+                        
+                        # 💡 CORREÇÃO: Agrupa, soma E ordena do maior para o menor
+                        beneficiarios_cronicos = (
+                            utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']]
+                            .groupby('Nome_do_Associado')['Valor']
+                            .sum()
+                            .sort_values(ascending=False) # <--- ORDENAÇÃO POR VALOR (MAIOR PARA MENOR)
+                        )
+                        
                         df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                         df_cronicos.insert(0, 'Ranking', range(1, 1 + len(df_cronicos)))
-                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True,hide_index=True)
+                        
+                        # Adicionado hide_index=True para remover a coluna numérica extra
+                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True, hide_index=True) 
                     else:
                         st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
 
