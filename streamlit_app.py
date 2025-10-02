@@ -3,7 +3,7 @@ import numpy as np
 from unidecode import unidecode
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go # Importado para gráficos mais avançados
+import plotly.graph_objects as go 
 from io import BytesIO
 import re
 
@@ -220,13 +220,13 @@ def format_brl(value):
     # Formata para string BR: ponto para milhar, vírgula para decimal
     return "R$ {:,.2f}".format(value).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
-# NOVA FUNÇÃO MODIFICADA: Formata o DataFrame inteiro com o padrão BR e índice começando em 1
+# FUNÇÃO: Formata o DataFrame inteiro com o padrão BR
+# Corrigida para focar na formatação de valores. O índice é corrigido com a adição da coluna 'Ranking'
 def style_dataframe_brl(df, value_cols=['Valor']):
-    """Aplica formatação monetária BR em colunas específicas de um DataFrame
-    E define o índice de exibição para começar em 1.
+    """Aplica formatação monetária BR em colunas específicas de um DataFrame.
     Retorna um Styler para uso no st.dataframe."""
     
-    # Cria uma cópia temporária do DF
+    # Criamos uma cópia do DF para aplicar o Styler
     df_styled = df.copy() 
     
     formatters = {}
@@ -245,18 +245,10 @@ def style_dataframe_brl(df, value_cols=['Valor']):
     if 0 in df_styled.columns and 0 not in formatters:
         formatters[0] = lambda x: '{:,.0f}'.format(x).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
-    # Aplica o estilo (o df_styled.index.map(lambda x: x + 1) cria um novo índice iniciando em 1)
+    # Aplica o estilo.
     if formatters:
-        # Aplica a formatação de valor
-        styler = df_styled.style.format(formatters)
-    else:
-        styler = df_styled.style
-        
-    # === ADIÇÃO PARA MUDAR O ÍNDICE INICIAL DE 0 PARA 1 ===
-    # Mapeia o índice para si mesmo + 1, e oculta o nome do índice (opcional)
-    styler = styler.format_index(lambda x: x + 1, axis=0)
-    
-    return styler
+        return df_styled.style.format(formatters)
+    return df_styled
 
 # ---------------------------
 # 2. AUTENTICAÇÃO
@@ -575,14 +567,18 @@ if st.session_state.logged_in:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                             st.markdown("### 💎 Top 10 por Custo")
                             custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
-                            df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                            # CORREÇÃO: Adiciona a coluna Ranking
+                            df_custo = custo_por_benef.head(10).reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                            df_custo.insert(0, 'Ranking', range(1, 1 + len(df_custo)))
                             st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400)
                             
                     with col2_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns:
                             st.markdown("### 📊 Top 10 por Volume")
                             top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
-                            df_volume = top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                            # CORREÇÃO: Adiciona a coluna Ranking
+                            df_volume = top10_volume.head(10).reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                            df_volume.insert(0, 'Ranking', range(1, 1 + len(df_volume)))
                             st.dataframe(style_dataframe_brl(df_volume, value_cols=[]), use_container_width=True, height=400)
 
                 # --- ABA: COMPARATIVO (RH) ---
@@ -662,7 +658,9 @@ if st.session_state.logged_in:
                         with col1_alert:
                             if not alert_custo.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Custo")
-                                df_alert_custo = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                                # CORREÇÃO: Adiciona a coluna Ranking
+                                df_alert_custo = alert_custo.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                                df_alert_custo.insert(0, 'Ranking', range(1, 1 + len(df_alert_custo)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl
                                 st.dataframe(style_dataframe_brl(df_alert_custo), use_container_width=True)
                             else:
@@ -671,7 +669,9 @@ if st.session_state.logged_in:
                         with col2_alert:
                             if not alert_vol.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Volume")
-                                df_alert_vol = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                                # CORREÇÃO: Adiciona a coluna Ranking
+                                df_alert_vol = alert_vol.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                                df_alert_vol.insert(0, 'Ranking', range(1, 1 + len(df_alert_vol)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
                                 st.dataframe(style_dataframe_brl(df_alert_vol, value_cols=[]), use_container_width=True)
                             else:
@@ -706,6 +706,9 @@ if st.session_state.logged_in:
                             inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns='Nome_merge')])
                             
                     if not inconsistencias.empty:
+                        # CORREÇÃO: Adiciona a coluna Linha/ID
+                        inconsistencias = inconsistencias.reset_index(drop=True)
+                        inconsistencias.insert(0, 'Linha', range(1, 1 + len(inconsistencias)))
                         # Aplicar formatação para a coluna 'Valor' nas inconsistências
                         st.dataframe(style_dataframe_brl(inconsistencias), use_container_width=True)
                     else:
@@ -721,7 +724,9 @@ if st.session_state.logged_in:
                         # Verifica se o CID começa com um dos códigos crônicos
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].astype(str).str.startswith(tuple(cids_cronicos))
                         beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                        df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                        # CORREÇÃO: Adiciona a coluna Ranking
+                        df_cronicos = beneficiarios_cronicos.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                        df_cronicos.insert(0, 'Ranking', range(1, 1 + len(df_cronicos)))
                         st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True)
                     else:
                         st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
@@ -729,7 +734,9 @@ if st.session_state.logged_in:
                     st.markdown("### 💊 Top 10 Procedimentos por Custo")
                     if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                        df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                        # CORREÇÃO: Adiciona a coluna Ranking
+                        df_top_proc = top_proc.reset_index(drop=True).rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                        df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                         st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
                     else:
                         st.info("ℹ️ Colunas de Procedimento/Valor não encontradas para esta análise.")
@@ -797,14 +804,20 @@ if st.session_state.logged_in:
                             
                             st.markdown("### 📝 Informações Cadastrais")
                             if not cad_b.empty:
-                                st.dataframe(cad_b.reset_index(drop=True), use_container_width=True)
+                                # CORREÇÃO: Adiciona a coluna ID
+                                cad_b_display = cad_b.reset_index(drop=True)
+                                cad_b_display.insert(0, 'ID', range(1, 1 + len(cad_b_display)))
+                                st.dataframe(cad_b_display, use_container_width=True)
                             else:
                                 st.info("ℹ️ Informações cadastrais não encontradas nos filtros aplicados.")
 
                             st.markdown("### 📋 Utilização do Plano (Atendimentos)")
                             if not util_b.empty:
+                                # CORREÇÃO: Adiciona a coluna ID_Registro
+                                util_b_display = util_b.reset_index(drop=True)
+                                util_b_display.insert(0, 'ID_Registro', range(1, 1 + len(util_b_display)))
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
-                                st.dataframe(style_dataframe_brl(util_b.reset_index(drop=True)), use_container_width=True)
+                                st.dataframe(style_dataframe_brl(util_b_display), use_container_width=True)
                             else:
                                 st.info("ℹ️ Nenhum registro de utilização encontrado para os filtros aplicados.")
 
@@ -847,7 +860,9 @@ if st.session_state.logged_in:
                                 st.markdown("### 💉 Principais Procedimentos")
                                 if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
                                     top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                                    df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                                    # CORREÇÃO: Adiciona a coluna Ranking
+                                    df_top_proc = top_proc_b.reset_index(drop=True).rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                                    df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                                     # USANDO A NOVA FUNÇÃO style_dataframe_brl
                                     st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
                                 else:
@@ -876,7 +891,8 @@ if st.session_state.logged_in:
                                     util_b_export = util_b.drop(columns=['Mes_Ano', 'Tipo_Beneficiario'], errors='ignore')
                                     util_b_export.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
                                 if not cad_b.empty:
-                                    cad_b.to_excel(writer, sheet_name='Cadastro_Individual', index=False)
+                                    # Certifique-se de usar a versão original do cad_b sem a coluna ID temporária para exportação
+                                    cad_b.drop(columns=['ID'], errors='ignore').to_excel(writer, sheet_name='Cadastro_Individual', index=False)
                                 if not medicina_trabalho.empty:
                                     # Filtragem de medicina do trabalho para o beneficiário
                                     med_b = medicina_trabalho[medicina_trabalho.get('Nome_do_Associado', pd.Series()).fillna('') == selected_benef]
