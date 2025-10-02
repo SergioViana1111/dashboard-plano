@@ -220,33 +220,43 @@ def format_brl(value):
     # Formata para string BR: ponto para milhar, vírgula para decimal
     return "R$ {:,.2f}".format(value).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
-# NOVA FUNÇÃO: Formata o DataFrame inteiro com o padrão BR
+# NOVA FUNÇÃO MODIFICADA: Formata o DataFrame inteiro com o padrão BR e índice começando em 1
 def style_dataframe_brl(df, value_cols=['Valor']):
-    """Aplica formatação monetária BR em colunas específicas de um DataFrame.
+    """Aplica formatação monetária BR em colunas específicas de um DataFrame
+    E define o índice de exibição para começar em 1.
     Retorna um Styler para uso no st.dataframe."""
+    
+    # Cria uma cópia temporária do DF
+    df_styled = df.copy() 
     
     formatters = {}
     
     # 1. Colunas de Valor (R$ 1.234,56)
     for col in value_cols:
-        if col in df.columns:
+        if col in df_styled.columns:
             # Usamos a função format_brl como formatter
             formatters[col] = format_brl
     
-    # 2. Colunas de Volume (1.234) - Se houver colunas '0' ou 'Volume' não monetárias
-    # Verifica a coluna 'Volume' se existir
-    if 'Volume' in df.columns and 'Volume' not in formatters:
+    # 2. Colunas de Volume (1.234)
+    if 'Volume' in df_styled.columns and 'Volume' not in formatters:
         # Formato de número inteiro com separador de milhar BR (ponto)
         formatters['Volume'] = lambda x: '{:,.0f}'.format(x).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
         
-    # Verifica a coluna '0' (comum em count/size()) se existir
-    if 0 in df.columns and 0 not in formatters:
+    if 0 in df_styled.columns and 0 not in formatters:
         formatters[0] = lambda x: '{:,.0f}'.format(x).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
-    # Aplica o estilo
+    # Aplica o estilo (o df_styled.index.map(lambda x: x + 1) cria um novo índice iniciando em 1)
     if formatters:
-        return df.style.format(formatters)
-    return df
+        # Aplica a formatação de valor
+        styler = df_styled.style.format(formatters)
+    else:
+        styler = df_styled.style
+        
+    # === ADIÇÃO PARA MUDAR O ÍNDICE INICIAL DE 0 PARA 1 ===
+    # Mapeia o índice para si mesmo + 1, e oculta o nome do índice (opcional)
+    styler = styler.format_index(lambda x: x + 1, axis=0)
+    
+    return styler
 
 # ---------------------------
 # 2. AUTENTICAÇÃO
