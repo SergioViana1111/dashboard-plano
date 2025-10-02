@@ -646,10 +646,15 @@ if st.session_state.logged_in:
                         vol_lim = st.number_input("📊 Limite de atendimentos", value=20, key=f"vol_lim_{tab_name}")
 
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                        # NOVO CÓDIGO (Aplicando sort_values(ascending=False) para ordenar do maior para o menor)
                         custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum()
                         top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size()
-                        alert_custo = custo_por_benef[custo_por_benef > custo_lim]
-                        alert_vol = top10_volume[top10_volume > vol_lim]
+                        
+                        # 💡 CORREÇÃO: Filtra E ordena do maior para o menor para que o ranking 1 seja o maior valor.
+                        alert_custo = custo_por_benef[custo_por_benef > custo_lim].sort_values(ascending=False) 
+                        
+                        # 💡 CORREÇÃO: Filtra E ordena do maior para o menor para que o ranking 1 seja o maior volume.
+                        alert_vol = top10_volume[top10_volume > vol_lim].sort_values(ascending=False)
 
                         col1_alert, col2_alert = st.columns(2)
                         
