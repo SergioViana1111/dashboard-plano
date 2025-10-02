@@ -221,7 +221,6 @@ def format_brl(value):
     return "R$ {:,.2f}".format(value).replace(",", "TEMP").replace(".", ",").replace("TEMP", ".")
 
 # FUNÇÃO: Formata o DataFrame inteiro com o padrão BR
-# Corrigida para focar na formatação de valores. O índice é corrigido com a adição da coluna 'Ranking'
 def style_dataframe_brl(df, value_cols=['Valor']):
     """Aplica formatação monetária BR em colunas específicas de um DataFrame.
     Retorna um Styler para uso no st.dataframe."""
@@ -511,7 +510,6 @@ if st.session_state.logged_in:
                     num_beneficiarios = utilizacao_filtrada['Nome_do_Associado'].nunique() if 'Nome_do_Associado' in utilizacao_filtrada.columns else 0
                     custo_medio = custo_total / num_beneficiarios if num_beneficiarios > 0 else 0
 
-                    # ALTERAÇÃO SOLICITADA: 2 COLUNAS POR LINHA
                     
                     # PRIMEIRA LINHA: Custo Total e Atendimentos
                     col1, col2 = st.columns(2)
@@ -567,8 +565,8 @@ if st.session_state.logged_in:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                             st.markdown("### 💎 Top 10 por Custo")
                             custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
-                            # CORREÇÃO: Adiciona a coluna Ranking
-                            df_custo = custo_por_benef.head(10).reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                            # CORREÇÃO: Removemos 'drop=True'
+                            df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                             df_custo.insert(0, 'Ranking', range(1, 1 + len(df_custo)))
                             st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400)
                             
@@ -576,8 +574,8 @@ if st.session_state.logged_in:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns:
                             st.markdown("### 📊 Top 10 por Volume")
                             top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
-                            # CORREÇÃO: Adiciona a coluna Ranking
-                            df_volume = top10_volume.head(10).reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                            # CORREÇÃO: Removemos 'drop=True'
+                            df_volume = top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                             df_volume.insert(0, 'Ranking', range(1, 1 + len(df_volume)))
                             st.dataframe(style_dataframe_brl(df_volume, value_cols=[]), use_container_width=True, height=400)
 
@@ -658,8 +656,8 @@ if st.session_state.logged_in:
                         with col1_alert:
                             if not alert_custo.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Custo")
-                                # CORREÇÃO: Adiciona a coluna Ranking
-                                df_alert_custo = alert_custo.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                                # CORREÇÃO: Removemos 'drop=True'
+                                df_alert_custo = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                                 df_alert_custo.insert(0, 'Ranking', range(1, 1 + len(df_alert_custo)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl
                                 st.dataframe(style_dataframe_brl(df_alert_custo), use_container_width=True)
@@ -669,8 +667,8 @@ if st.session_state.logged_in:
                         with col2_alert:
                             if not alert_vol.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Volume")
-                                # CORREÇÃO: Adiciona a coluna Ranking
-                                df_alert_vol = alert_vol.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                                # CORREÇÃO: Removemos 'drop=True'
+                                df_alert_vol = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                                 df_alert_vol.insert(0, 'Ranking', range(1, 1 + len(df_alert_vol)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
                                 st.dataframe(style_dataframe_brl(df_alert_vol, value_cols=[]), use_container_width=True)
@@ -706,7 +704,7 @@ if st.session_state.logged_in:
                             inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns='Nome_merge')])
                             
                     if not inconsistencias.empty:
-                        # CORREÇÃO: Adiciona a coluna Linha/ID
+                        # Este reset_index(drop=True) está ok, pois inconsistencias já é um DataFrame
                         inconsistencias = inconsistencias.reset_index(drop=True)
                         inconsistencias.insert(0, 'Linha', range(1, 1 + len(inconsistencias)))
                         # Aplicar formatação para a coluna 'Valor' nas inconsistências
@@ -724,8 +722,8 @@ if st.session_state.logged_in:
                         # Verifica se o CID começa com um dos códigos crônicos
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].astype(str).str.startswith(tuple(cids_cronicos))
                         beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
-                        # CORREÇÃO: Adiciona a coluna Ranking
-                        df_cronicos = beneficiarios_cronicos.reset_index(drop=True).rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                        # CORREÇÃO: Removemos 'drop=True'
+                        df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                         df_cronicos.insert(0, 'Ranking', range(1, 1 + len(df_cronicos)))
                         st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True)
                     else:
@@ -734,8 +732,8 @@ if st.session_state.logged_in:
                     st.markdown("### 💊 Top 10 Procedimentos por Custo")
                     if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                        # CORREÇÃO: Adiciona a coluna Ranking
-                        df_top_proc = top_proc.reset_index(drop=True).rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                        # CORREÇÃO: Removemos 'drop=True'
+                        df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                         df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                         st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
                     else:
@@ -804,7 +802,7 @@ if st.session_state.logged_in:
                             
                             st.markdown("### 📝 Informações Cadastrais")
                             if not cad_b.empty:
-                                # CORREÇÃO: Adiciona a coluna ID
+                                # Este reset_index(drop=True) está ok, pois cad_b já é um DataFrame
                                 cad_b_display = cad_b.reset_index(drop=True)
                                 cad_b_display.insert(0, 'ID', range(1, 1 + len(cad_b_display)))
                                 st.dataframe(cad_b_display, use_container_width=True)
@@ -813,7 +811,7 @@ if st.session_state.logged_in:
 
                             st.markdown("### 📋 Utilização do Plano (Atendimentos)")
                             if not util_b.empty:
-                                # CORREÇÃO: Adiciona a coluna ID_Registro
+                                # Este reset_index(drop=True) está ok, pois util_b já é um DataFrame
                                 util_b_display = util_b.reset_index(drop=True)
                                 util_b_display.insert(0, 'ID_Registro', range(1, 1 + len(util_b_display)))
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
@@ -860,8 +858,8 @@ if st.session_state.logged_in:
                                 st.markdown("### 💉 Principais Procedimentos")
                                 if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
                                     top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                                    # CORREÇÃO: Adiciona a coluna Ranking
-                                    df_top_proc = top_proc_b.reset_index(drop=True).rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
+                                    # CORREÇÃO: Removemos 'drop=True'
+                                    df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                                     df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                                     # USANDO A NOVA FUNÇÃO style_dataframe_brl
                                     st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True)
