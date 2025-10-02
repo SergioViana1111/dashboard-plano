@@ -328,7 +328,7 @@ if st.session_state.logged_in:
     # ---------------------------
     # 4. Upload do arquivo
     # ---------------------------
-    uploaded_file = st.file_uploader("📁 Escolha o arquivo .xltx", type="xltx")
+    uploaded_file = st.file_uploader("📁 Escolha o arquivo .xltx ou .xlsx", type=["xlsx", "xltx"])
     if uploaded_file is not None:
         # Leitura das abas
         utilizacao = pd.read_excel(uploaded_file, sheet_name='Utilizacao')
