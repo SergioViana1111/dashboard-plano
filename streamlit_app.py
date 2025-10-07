@@ -564,9 +564,8 @@ if st.session_state.logged_in:
         # ---------------------------
 
         # Definir abas disponíveis por cargo com emojis
-        if role == "RH":
-            # NOVO: Adicionado "Detalhes Interativos"
-            tabs = ["📊 KPIs Gerais", "📈 Comparativo", "🚨 Alertas", "🔍 Busca", "📑 Detalhes Interativos", "📤 Exportação"]
+        if role == "RH":           
+            tabs = ["📊 KPIs Gerais", "📈 Comparativo", "🚨 Alertas", "🔍 Busca",  "📤 Exportação"]
         elif role == "MEDICO":
             tabs = ["🏥 Análise Médica", "🔍 Busca"]
         else:
@@ -1073,97 +1072,7 @@ if st.session_state.logged_in:
                             )
                     # --- FIM: Seção Detalhada ---
                 
-                # --- ABA: DETALHES INTERATIVOS (RH) ---
-                elif tab_name == "📑 Detalhes Interativos":
-                    st.markdown("### 🗂️ Dados de Utilização Interativos")
-                    st.write("Use a tabela interativa para filtrar, ordenar e selecionar registros de utilização. Exporte o resultado exato que você vê na tabela (incluindo filtros e ordenação aplicados).")
-
-                    if utilizacao_filtrada.empty:
-                        st.info("ℹ️ Nenhum dado de utilização encontrado com os filtros aplicados.")
-                    else:
-                        # Prepara o DataFrame para o AgGrid
-                        df_ag = utilizacao_filtrada.copy()
-                        df_ag.index = df_ag.index + 1 # Inicia o index em 1
-                        df_ag = df_ag.reset_index().rename(columns={'index': 'ID_Registro'})
-
-                        # Configuração do AgGrid
-                        gb = GridOptionsBuilder.from_dataframe(df_ag)
-                        
-                        # Formatação monetária e de data para AgGrid (exemplo)
-                        if 'Valor' in df_ag.columns:
-                            gb.configure_column("Valor", type=["numericColumn", "customNumericFormat"], 
-                                                valueFormatter="`'R$ ' + data.Valor.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})`",
-                                                aggFunc='sum')
-                        if 'Data_do_Atendimento' in df_ag.columns:
-                            gb.configure_column("Data_do_Atendimento", type=["dateColumnFilter", "customDateTimeFormat"], 
-                                                custom_format_string='dd/MM/yyyy',
-                                                cellRenderer='agDateStringCellRenderer')
-
-                        gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
-                        gb.configure_grid_options(domLayout='normal')
-                        
-                        # A linha gb.configure_export_params() FOI REMOVIDA AQUI para corrigir o AttributeError.
-                        
-                        # Configura a barra de status com agregações
-                        gb.configure_grid_options(
-                            enableRangeSelection=True,
-                            rowSelection='multiple',
-                            suppressRowClickSelection=True,
-                            groupSelectsChildren=True,
-                            groupSelectsFiltered=True,
-                            showOpenedGroup=True,
-                            enableCellTextSelection=True,
-                            ensureDomOrder=True
-                        )
-
-                        gridOptions = gb.build()
-
-                        # Exibe a tabela interativa
-                        grid_response = AgGrid(
-                            df_ag,
-                            gridOptions=gridOptions,
-                            data_return_mode=DataReturnMode.AS_INPUT,
-                            update_mode=GridUpdateMode.MODEL_CHANGED,
-                            fit_columns_on_grid_load=False,
-                            allow_unsafe_jscode=True, # Set it to True to allow jsfunction to be injected
-                            enable_enterprise_modules=False,
-                            height=400,
-                            width='100%',
-                            reload_data=True,
-                            key='aggrid' # Adicionei uma key para garantir a referência no JS
-                        )
-                        
-                        # Botão de Exportação Excel (usa a funcionalidade nativa do AgGrid via JS)
-                        # O Streamlit.getGridApi() usa o parâmetro 'key' do AgGrid
-                        st.markdown(
-                            """
-                            <script>
-                            // Função JS para exportar o que está visível no grid
-                            function download_data() {
-                                // Usa a chave 'aggrid' que definimos no componente AgGrid
-                                const gridApi = Streamlit.getGridApi('aggrid'); 
-                                if (gridApi) {
-                                    // Chama a função de exportação nativa do AgGrid para Excel
-                                    gridApi.exportDataAsExcel();
-                                }
-                            }
-                            </script>
-                            <button onclick="download_data()" style='
-                                background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-                                color: white;
-                                border: none;
-                                border-radius: 8px;
-                                padding: 0.75rem 2rem;
-                                font-weight: 600;
-                                transition: all 0.3s ease;
-                                cursor: pointer;
-                                display: block;
-                                width: 100%;
-                                margin-top: 1rem;
-                            '>📥 Baixar Dados Visualizados (Excel)</button>
-                            """,
-                            unsafe_allow_html=True
-                        )
+               
 
 
                 # --- ABA: EXPORTAÇÃO (RH) ---
