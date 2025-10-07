@@ -6,8 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go 
 from io import BytesIO
 import re
-# NOVO: Importação para tabelas interativas (AgGrid)
+# Importação para tabelas interativas (AgGrid)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from datetime import date # Importação adicional para garantir objetos de data puros
 
 # ---------------------------
 # 0. CONFIGURAÇÃO DE PÁGINA E TEMA
@@ -453,22 +454,32 @@ if st.session_state.logged_in:
         default_max = 65 if max_age > 65 else max_age
         faixa_etaria = st.sidebar.slider("📅 Faixa Etária", min_value=0, max_value=100, value=(default_min, default_max))
 
-        # Período
-        periodo_min = utilizacao['Data_do_Atendimento'].min() if 'Data_do_Atendimento' in utilizacao.columns and not utilizacao['Data_do_Atendimento'].empty else pd.Timestamp.today()
-        periodo_max = utilizacao['Data_do_Atendimento'].max() if 'Data_do_Atendimento' in utilizacao.columns and not utilizacao['Data_do_Atendimento'].empty else pd.Timestamp.today()
-        # Tratamento para garantir que período_min e periodo_max sejam datas válidas
-        if pd.isna(periodo_min) or periodo_min == pd.Timestamp.today():
-             periodo_min = pd.Timestamp.today().normalize() - pd.DateOffset(years=1)
-        if pd.isna(periodo_max) or periodo_max == pd.Timestamp.today():
-            periodo_max = pd.Timestamp.today().normalize()
-            
+        # Período - CORREÇÃO DE ROBUSTEZ AQUI
+        # 1. Tenta pegar a data real dos dados, se não conseguir, usa o default.
+        data_atend_col = 'Data_do_Atendimento'
+        periodo_min_initial = utilizacao[data_atend_col].min() if data_atend_col in utilizacao.columns and not utilizacao.empty else None
+        periodo_max_initial = utilizacao[data_atend_col].max() if data_atend_col in utilizacao.columns and not utilizacao.empty else None
+        
+        # 2. Define defaults (usando datetime.date)
+        periodo_min_default = (pd.Timestamp.today().normalize() - pd.DateOffset(years=1)).date()
+        periodo_max_default = pd.Timestamp.today().normalize().date()
+        
+        # 3. Usa data inicial se for válida (not NaT), senão usa o default
+        periodo_min = periodo_min_initial.date() if pd.notna(periodo_min_initial) else periodo_min_default
+        periodo_max = periodo_max_initial.date() if pd.notna(periodo_max_initial) else periodo_max_default
+
+        # O st.date_input retorna uma lista/tuple de datetime.date
         periodo = st.sidebar.date_input("📆 Período", [periodo_min, periodo_max])
-        # Garantir que o output é sempre uma lista de 2 elementos
-        if not isinstance(periodo, list) or len(periodo) != 2:
+        
+        # 4. Validação do período (o warning aqui só é exibido se for necessário)
+        if not periodo or len(periodo) != 2:
             st.warning("Selecione um período válido (data de início e fim).")
             # Usa o default para evitar erro na filtragem
-            periodo = [periodo_min, periodo_max]
-
+            periodo = [periodo_min, periodo_max] # Garantindo que tem 2 elementos (datetime.date)
+            
+        # 5. Converte para pd.Timestamp para a filtragem no DataFrame
+        periodo_start = pd.to_datetime(periodo[0])
+        periodo_end = pd.to_datetime(periodo[1])
 
         # ---------------------------
         # 8. Aplicar filtros
@@ -509,8 +520,8 @@ if st.session_state.logged_in:
         data_col = 'Data_do_Atendimento'
         if data_col in utilizacao_filtrada.columns:
             utilizacao_filtrada = utilizacao_filtrada[
-                (utilizacao_filtrada[data_col] >= pd.to_datetime(periodo[0])) &
-                (utilizacao_filtrada[data_col] <= pd.to_datetime(periodo[1]))
+                (utilizacao_filtrada[data_col] >= periodo_start) & # Usa periodo_start e periodo_end (Timestamp)
+                (utilizacao_filtrada[data_col] <= periodo_end)
             ]
         # REFILTRAR CADASTRO após a filtragem da utilização para garantir lista de nomes completa
         if benef_col in utilizacao_filtrada.columns and benef_col in cadastro_filtrado.columns:
@@ -665,7 +676,7 @@ if st.session_state.logged_in:
 
                     st.markdown("---")
                     
-                    # NOVO: Ranking de CODs por Município
+                    # Ranking de CODs por Município
                     st.markdown("### 🗺️ Ranking de Procedimentos/CIDs por Município")
                     
                     cod_col = get_cod_col(utilizacao_filtrada)
@@ -1062,7 +1073,7 @@ if st.session_state.logged_in:
                             )
                     # --- FIM: Seção Detalhada ---
                 
-                # --- NOVO ABA: DETALHES INTERATIVOS (RH) ---
+                # --- ABA: DETALHES INTERATIVOS (RH) ---
                 elif tab_name == "📑 Detalhes Interativos":
                     st.markdown("### 🗂️ Dados de Utilização Interativos")
                     st.write("Use a tabela interativa para filtrar, ordenar e selecionar registros de utilização. Exporte o resultado exato que você vê na tabela (incluindo filtros e ordenação aplicados).")
@@ -1091,9 +1102,7 @@ if st.session_state.logged_in:
                         gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
                         gb.configure_grid_options(domLayout='normal')
                         
-                        # Opções de exportação
-                        gb.configure_export_params(data_key="data", file_name="export_utilizacao_aggrid", 
-                                                   column_separator=";", suppress_quotes=True)
+                        # A linha gb.configure_export_params() FOI REMOVIDA AQUI para corrigir o AttributeError.
                         
                         # Configura a barra de status com agregações
                         gb.configure_grid_options(
@@ -1120,16 +1129,21 @@ if st.session_state.logged_in:
                             enable_enterprise_modules=False,
                             height=400,
                             width='100%',
-                            reload_data=True
+                            reload_data=True,
+                            key='aggrid' # Adicionei uma key para garantir a referência no JS
                         )
                         
-                        # Botão de Exportação Excel (usa a funcionalidade nativa do AgGrid)
+                        # Botão de Exportação Excel (usa a funcionalidade nativa do AgGrid via JS)
+                        # O Streamlit.getGridApi() usa o parâmetro 'key' do AgGrid
                         st.markdown(
                             """
                             <script>
+                            // Função JS para exportar o que está visível no grid
                             function download_data() {
+                                // Usa a chave 'aggrid' que definimos no componente AgGrid
                                 const gridApi = Streamlit.getGridApi('aggrid'); 
                                 if (gridApi) {
+                                    // Chama a função de exportação nativa do AgGrid para Excel
                                     gridApi.exportDataAsExcel();
                                 }
                             }
