@@ -6,6 +6,8 @@ import plotly.express as px
 import plotly.graph_objects as go 
 from io import BytesIO
 import re
+# NOVO: Importação para tabelas interativas (AgGrid)
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # ---------------------------
 # 0. CONFIGURAÇÃO DE PÁGINA E TEMA
@@ -422,6 +424,13 @@ if st.session_state.logged_in:
             options=utilizacao['Tipo_Beneficiario'].unique(),
             default=utilizacao['Tipo_Beneficiario'].unique()
         )
+        
+        # NOVO: Filtro Global de Planos
+        possible_plano_cols = [col for col in utilizacao.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
+        plano_col = possible_plano_cols[0] if possible_plano_cols else None
+        plano_opts = utilizacao[plano_col].dropna().unique() if plano_col else []
+        plano_filtro = st.sidebar.multiselect("🛡️ Plano Contratado", options=plano_opts, default=plano_opts)
+
 
         # Município
         municipio_filtro = None
@@ -430,36 +439,84 @@ if st.session_state.logged_in:
             municipio_filtro = st.sidebar.multiselect("📍 Município", options=municipio_opts, default=municipio_opts)
 
         # Faixa etária
-        faixa_etaria = st.sidebar.slider("📅 Faixa Etária", 0, 100, (18, 65))
+        idade_col = 'Data_de_Nascimento'
+        min_age, max_age = 0, 100
+        if idade_col in cadastro.columns:
+            # Cálculo de idade para obter o min/max real, se aplicável
+            idade_real = (pd.Timestamp.today() - cadastro[idade_col]).dt.days // 365
+            if not idade_real.empty:
+                min_age = max(0, int(idade_real.min()))
+                max_age = int(idade_real.max())
+                
+        # O slider usará 0-100 como range, mas os defaults serão calculados ou o padrão 18-65
+        default_min = 18 if min_age < 18 else min_age
+        default_max = 65 if max_age > 65 else max_age
+        faixa_etaria = st.sidebar.slider("📅 Faixa Etária", min_value=0, max_value=100, value=(default_min, default_max))
 
         # Período
-        periodo_min = utilizacao['Data_do_Atendimento'].min() if 'Data_do_Atendimento' in utilizacao.columns else pd.Timestamp.today()
-        periodo_max = utilizacao['Data_do_Atendimento'].max() if 'Data_do_Atendimento' in utilizacao.columns else pd.Timestamp.today()
+        periodo_min = utilizacao['Data_do_Atendimento'].min() if 'Data_do_Atendimento' in utilizacao.columns and not utilizacao['Data_do_Atendimento'].empty else pd.Timestamp.today()
+        periodo_max = utilizacao['Data_do_Atendimento'].max() if 'Data_do_Atendimento' in utilizacao.columns and not utilizacao['Data_do_Atendimento'].empty else pd.Timestamp.today()
+        # Tratamento para garantir que período_min e periodo_max sejam datas válidas
+        if pd.isna(periodo_min) or periodo_min == pd.Timestamp.today():
+             periodo_min = pd.Timestamp.today().normalize() - pd.DateOffset(years=1)
+        if pd.isna(periodo_max) or periodo_max == pd.Timestamp.today():
+            periodo_max = pd.Timestamp.today().normalize()
+            
         periodo = st.sidebar.date_input("📆 Período", [periodo_min, periodo_max])
+        # Garantir que o output é sempre uma lista de 2 elementos
+        if not isinstance(periodo, list) or len(periodo) != 2:
+            st.warning("Selecione um período válido (data de início e fim).")
+            # Usa o default para evitar erro na filtragem
+            periodo = [periodo_min, periodo_max]
+
 
         # ---------------------------
         # 8. Aplicar filtros
         # ---------------------------
         cadastro_filtrado = cadastro.copy()
-        if 'Data_de_Nascimento' in cadastro_filtrado.columns:
-            idade = (pd.Timestamp.today() - cadastro_filtrado['Data_de_Nascimento']).dt.days // 365
+        if idade_col in cadastro_filtrado.columns:
+            idade = (pd.Timestamp.today() - cadastro_filtrado[idade_col]).dt.days // 365
+            # Aplica o filtro de Faixa Etária
             cadastro_filtrado = cadastro_filtrado[(idade >= faixa_etaria[0]) & (idade <= faixa_etaria[1])]
+        
+        # Filtro de Sexo
         if sexo_filtro and sexo_col:
             cadastro_filtrado = cadastro_filtrado[cadastro_filtrado[sexo_col].isin(sexo_filtro)]
+            
+        # Filtro de Município
         if municipio_filtro is not None:
-            cadastro_filtrado = cadastro_filtrado[cadastro_filtrado['Municipio_do_Participante'].isin(municipio_filtro)]
+            if 'Municipio_do_Participante' in cadastro_filtrado.columns:
+                cadastro_filtrado = cadastro_filtrado[cadastro_filtrado['Municipio_do_Participante'].isin(municipio_filtro)]
 
         utilizacao_filtrada = utilizacao.copy()
+        
+        # Filtro de Tipo Beneficiário
         if tipo_benef_filtro:
             utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Tipo_Beneficiario'].isin(tipo_benef_filtro)]
+            
+        # Filtro de Plano
+        if plano_filtro and plano_col:
+            utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada[plano_col].isin(plano_filtro)]
+
         # garantir que filtragem cruze com cadastro filtrado se houver Nome_do_Associado em ambas
-        if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Nome_do_Associado' in cadastro_filtrado.columns:
-            utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
-        if 'Data_do_Atendimento' in utilizacao_filtrada.columns:
+        benef_col = 'Nome_do_Associado'
+        if benef_col in utilizacao_filtrada.columns and benef_col in cadastro_filtrado.columns:
+            # Lista de beneficiários válidos após filtros do cadastro (faixa, sexo, município)
+            benef_validos = cadastro_filtrado[benef_col].dropna().unique()
+            utilizacao_filtrada = utilizacao_filtrada[utilizacao_filtrada[benef_col].isin(benef_validos)]
+            
+        # Filtro de Período
+        data_col = 'Data_do_Atendimento'
+        if data_col in utilizacao_filtrada.columns:
             utilizacao_filtrada = utilizacao_filtrada[
-                (utilizacao_filtrada['Data_do_Atendimento'] >= pd.to_datetime(periodo[0])) &
-                (utilizacao_filtrada['Data_do_Atendimento'] <= pd.to_datetime(periodo[1]))
+                (utilizacao_filtrada[data_col] >= pd.to_datetime(periodo[0])) &
+                (utilizacao_filtrada[data_col] <= pd.to_datetime(periodo[1]))
             ]
+        # REFILTRAR CADASTRO após a filtragem da utilização para garantir lista de nomes completa
+        if benef_col in utilizacao_filtrada.columns and benef_col in cadastro_filtrado.columns:
+             benef_utilizados = utilizacao_filtrada[benef_col].dropna().unique()
+             cadastro_filtrado = cadastro_filtrado[cadastro_filtrado[benef_col].isin(benef_utilizados)]
+
 
         # ---------------------------
         # 9. Preparar lista de nomes para busca
@@ -477,6 +534,19 @@ if st.session_state.logged_in:
             return unidecode(str(s)).strip().upper()
 
         nomes_norm_map = {normalize_name(n): n for n in nomes_possiveis}
+        
+        # ---------------------------
+        # 9.1. Função para encontrar a coluna de COD
+        # ---------------------------
+        def get_cod_col(df):
+            if 'Nome_do_Procedimento' in df.columns:
+                return 'Nome_do_Procedimento'
+            elif 'Codigo_do_Procedimento' in df.columns:
+                return 'Codigo_do_Procedimento'
+            elif 'Codigo_do_CID' in df.columns:
+                return 'Codigo_do_CID'
+            return None
+
 
         # ---------------------------
         # 10. Dashboard Tabs por Role
@@ -484,9 +554,9 @@ if st.session_state.logged_in:
 
         # Definir abas disponíveis por cargo com emojis
         if role == "RH":
-            tabs = ["📊 KPIs Gerais", "📈 Comparativo", "🚨 Alertas", "🔍 Busca", "📤 Exportação"]
+            # NOVO: Adicionado "Detalhes Interativos"
+            tabs = ["📊 KPIs Gerais", "📈 Comparativo", "🚨 Alertas", "🔍 Busca", "📑 Detalhes Interativos", "📤 Exportação"]
         elif role == "MEDICO":
-            # Renomeado para seguir o padrão do código modelo
             tabs = ["🏥 Análise Médica", "🔍 Busca"]
         else:
             tabs = []
@@ -523,7 +593,7 @@ if st.session_state.logged_in:
                     with col3:
                         st.metric("👥 Beneficiários", f"{num_beneficiarios:,.0f}".replace(",", "."))
                     with col4:
-                        st.metric("📊 Custo Médio", format_brl(custo_medio))
+                        st.metric("📊 Custo Médio por Beneficiário", format_brl(custo_medio))
                     
                     st.markdown("---")
                     
@@ -558,32 +628,114 @@ if st.session_state.logged_in:
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
-                    # Top 10 beneficiários
+                    # Top 20 beneficiários (AGORA É TOP 20)
                     col1_top, col2_top = st.columns(2)
                     
                     with col1_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                            st.markdown("### 💎 Top 10 por Custo")
+                            st.markdown("### 💎 Top 20 por Custo")
                             custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum().sort_values(ascending=False)
-                            # CORREÇÃO: Removemos 'drop=True'
-                            df_custo = custo_por_benef.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
+                            df_custo = custo_por_benef.head(20).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                             df_custo.insert(0, 'Ranking', range(1, 1 + len(df_custo)))
                             st.dataframe(style_dataframe_brl(df_custo), use_container_width=True, height=400, hide_index=True)
                             
+                            # Exportação do Top 20 Custo (NOVO)
+                            buf_top20 = BytesIO()
+                            df_custo_export = df_custo.copy()
+                            # Para exportação, removemos a formatação de R$
+                            df_custo_export['Valor'] = df_custo_export['Valor'].round(2)
+                            df_custo_export.to_excel(buf_top20, index=False)
+                            buf_top20.seek(0)
+                            st.download_button(
+                                label="📥 Exportar Top 20 Custo",
+                                data=buf_top20,
+                                file_name="top20_custo_beneficiarios.xlsx",
+                                mime="application/vnd.ms-excel",
+                                key="export_top20_custo"
+                            )
+                            
                     with col2_top:
                         if 'Nome_do_Associado' in utilizacao_filtrada.columns:
-                            st.markdown("### 📊 Top 10 por Volume")
-                            top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
-                            # CORREÇÃO: Removemos 'drop=True'
-                            df_volume = top10_volume.head(10).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
+                            st.markdown("### 📊 Top 20 por Volume")
+                            top20_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size().sort_values(ascending=False)
+                            df_volume = top20_volume.head(20).reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                             df_volume.insert(0, 'Ranking', range(1, 1 + len(df_volume)))
                             st.dataframe(style_dataframe_brl(df_volume, value_cols=[]), use_container_width=True, height=400, hide_index=True)
 
+
+                    st.markdown("---")
+                    
+                    # NOVO: Ranking de CODs por Município
+                    st.markdown("### 🗺️ Ranking de Procedimentos/CIDs por Município")
+                    
+                    cod_col = get_cod_col(utilizacao_filtrada)
+                    
+                    if cod_col and 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
+                        
+                        # 1. Merge com Município
+                        df_merge = utilizacao_filtrada.merge(
+                            cadastro_filtrado[['Nome_do_Associado', 'Municipio_do_Participante']].drop_duplicates(),
+                            on='Nome_do_Associado', 
+                            how='left'
+                        )
+                        df_merge['Municipio_do_Participante'] = df_merge['Municipio_do_Participante'].fillna('Desconhecido')
+                        
+                        # 2. Seletor de Município
+                        municipios_validos = sorted(df_merge['Municipio_do_Participante'].unique().tolist())
+                        selected_municipio = st.selectbox(
+                            "📍 Selecione o Município para Análise:", 
+                            options=["TODOS"] + municipios_validos
+                        )
+                        
+                        # 3. Filtragem por Município
+                        if selected_municipio != "TODOS":
+                            df_filtrado_mun = df_merge[df_merge['Municipio_do_Participante'] == selected_municipio]
+                        else:
+                            df_filtrado_mun = df_merge.copy()
+                            
+                        # 4. Agrupamento
+                        ranking_cod = df_filtrado_mun.groupby(cod_col).agg(
+                            Volume=('Valor', 'size'),
+                            Custo_Total=('Valor', 'sum')
+                        ).reset_index()
+                        
+                        # 5. Ordenação (por Volume decrescente)
+                        ranking_cod = ranking_cod.sort_values(by='Volume', ascending=False)
+                        
+                        ranking_cod.insert(0, 'Ranking', range(1, 1 + len(ranking_cod)))
+                        ranking_cod = ranking_cod.rename(columns={cod_col: 'Código/Procedimento', 'Volume': 'Volume (Freq.)', 'Custo_Total': 'Custo Total'})
+                        
+                        st.dataframe(
+                            style_dataframe_brl(ranking_cod, value_cols=['Custo Total']), 
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Gráfico para visualização
+                        if not ranking_cod.empty:
+                            top10_ranking = ranking_cod.head(10).sort_values(by='Custo Total', ascending=True)
+                            fig_cod = px.bar(
+                                top10_ranking,
+                                x='Custo Total',
+                                y='Código/Procedimento',
+                                orientation='h',
+                                title=f'Top 10 Códigos/Procedimentos por Custo em {selected_municipio}',
+                                color='Custo Total',
+                                color_continuous_scale=px.colors.sequential.Plasma
+                            )
+                            fig_cod.update_layout(
+                                plot_bgcolor='white',
+                                paper_bgcolor='white',
+                                yaxis={'categoryorder':'total ascending'}
+                            )
+                            st.plotly_chart(fig_cod, use_container_width=True)
+
+                    else:
+                        st.info(f"ℹ️ Não foi possível realizar o ranking. Colunas necessárias ({cod_col}, Nome_do_Associado, Valor) ou Município não encontradas/preenchidas.")
+
                 # --- ABA: COMPARATIVO (RH) ---
                 elif tab_name == "📈 Comparativo":
-                    possible_cols = [col for col in utilizacao_filtrada.columns if 'plano' in col.lower() and 'descricao' in col.lower()]
-                    if possible_cols and 'Valor' in utilizacao_filtrada.columns:
-                        plano_col = possible_cols[0]
+                    if plano_col and 'Valor' in utilizacao_filtrada.columns:
                         st.markdown("### 📊 Análise por Plano")
                         
                         comp = utilizacao_filtrada.groupby(plano_col)['Valor'].sum().reset_index()
@@ -646,14 +798,13 @@ if st.session_state.logged_in:
                         vol_lim = st.number_input("📊 Limite de atendimentos", value=20, key=f"vol_lim_{tab_name}")
 
                     if 'Nome_do_Associado' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
-                        # NOVO CÓDIGO (Aplicando sort_values(ascending=False) para ordenar do maior para o menor)
                         custo_por_benef = utilizacao_filtrada.groupby('Nome_do_Associado')['Valor'].sum()
                         top10_volume = utilizacao_filtrada.groupby('Nome_do_Associado').size()
                         
-                        # 💡 CORREÇÃO: Filtra E ordena do maior para o menor para que o ranking 1 seja o maior valor.
+                        # Filtra E ordena do maior para o menor para que o ranking 1 seja o maior valor.
                         alert_custo = custo_por_benef[custo_por_benef > custo_lim].sort_values(ascending=False) 
                         
-                        # 💡 CORREÇÃO: Filtra E ordena do maior para o menor para que o ranking 1 seja o maior volume.
+                        # Filtra E ordena do maior para o menor para que o ranking 1 seja o maior volume.
                         alert_vol = top10_volume[top10_volume > vol_lim].sort_values(ascending=False)
 
                         col1_alert, col2_alert = st.columns(2)
@@ -661,7 +812,6 @@ if st.session_state.logged_in:
                         with col1_alert:
                             if not alert_custo.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Custo")
-                                # CORREÇÃO: Removemos 'drop=True'
                                 df_alert_custo = alert_custo.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                                 df_alert_custo.insert(0, 'Ranking', range(1, 1 + len(df_alert_custo)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl
@@ -672,7 +822,6 @@ if st.session_state.logged_in:
                         with col2_alert:
                             if not alert_vol.empty:
                                 st.markdown("#### ⚠️ Acima do Limite de Volume")
-                                # CORREÇÃO: Removemos 'drop=True'
                                 df_alert_vol = alert_vol.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário',0:'Volume'})
                                 df_alert_vol.insert(0, 'Ranking', range(1, 1 + len(df_alert_vol)))
                                 # USANDO A NOVA FUNÇÃO style_dataframe_brl (sem R$)
@@ -709,7 +858,6 @@ if st.session_state.logged_in:
                             inconsistencias = pd.concat([inconsistencias, parto_masc.drop(columns='Nome_merge')])
                             
                     if not inconsistencias.empty:
-                        # Este reset_index(drop=True) está ok, pois inconsistencias já é um DataFrame
                         inconsistencias = inconsistencias.reset_index(drop=True)
                         inconsistencias.insert(0, 'Linha', range(1, 1 + len(inconsistencias)))
                         # Aplicar formatação para a coluna 'Valor' nas inconsistências
@@ -720,33 +868,21 @@ if st.session_state.logged_in:
                 # --- ABA: ANÁLISE MÉDICA (MEDICO) ---
                 elif tab_name == "🏥 Análise Médica":
                     st.markdown("### 🧬 Beneficiários com Condições Crônicas")
-                    # Adaptação para o novo nome da aba: "Análise Médica"
                     cids_cronicos = ['E11','I10','J45'] # Diabetes, Hipertensão, Asma
                     if 'Codigo_do_CID' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         utilizacao_filtrada_temp = utilizacao_filtrada.copy()
                         # Verifica se o CID começa com um dos códigos crônicos
                         utilizacao_filtrada_temp.loc[:, 'Cronico'] = utilizacao_filtrada_temp['Codigo_do_CID'].astype(str).str.startswith(tuple(cids_cronicos))
-                        
-                        # 💡 CORREÇÃO: Agrupa, soma E ordena do maior para o menor
-                        beneficiarios_cronicos = (
-                            utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']]
-                            .groupby('Nome_do_Associado')['Valor']
-                            .sum()
-                            .sort_values(ascending=False) # <--- ORDENAÇÃO POR VALOR (MAIOR PARA MENOR)
-                        )
-                        
+                        beneficiarios_cronicos = utilizacao_filtrada_temp[utilizacao_filtrada_temp['Cronico']].groupby('Nome_do_Associado')['Valor'].sum()
                         df_cronicos = beneficiarios_cronicos.reset_index().rename(columns={'Nome_do_Associado':'Beneficiário','Valor':'Valor'})
                         df_cronicos.insert(0, 'Ranking', range(1, 1 + len(df_cronicos)))
-                        
-                        # Adicionado hide_index=True para remover a coluna numérica extra
-                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True, hide_index=True) 
+                        st.dataframe(style_dataframe_brl(df_cronicos), use_container_width=True,hide_index=True)
                     else:
                         st.info("ℹ️ Colunas de CID ou Valor não encontradas para esta análise.")
 
                     st.markdown("### 💊 Top 10 Procedimentos por Custo")
                     if 'Nome_do_Procedimento' in utilizacao_filtrada.columns and 'Valor' in utilizacao_filtrada.columns:
                         top_proc = utilizacao_filtrada.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                        # CORREÇÃO: Removemos 'drop=True'
                         df_top_proc = top_proc.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                         df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                         st.dataframe(style_dataframe_brl(df_top_proc), use_container_width=True,hide_index=True)
@@ -779,6 +915,7 @@ if st.session_state.logged_in:
 
                     chosen = None
                     if matches:
+                        # NEW: 'select_benef' to keep state on refresh
                         chosen = st.selectbox("Resultados da busca — selecione o beneficiário", options=[""] + matches, index=0, key="busca_selectbox")
                         if chosen == "":
                             st.session_state.selected_benef = None
@@ -816,7 +953,6 @@ if st.session_state.logged_in:
                             
                             st.markdown("### 📝 Informações Cadastrais")
                             if not cad_b.empty:
-                                # Este reset_index(drop=True) está ok, pois cad_b já é um DataFrame
                                 cad_b_display = cad_b.reset_index(drop=True)
                                 cad_b_display.insert(0, 'ID', range(1, 1 + len(cad_b_display)))
                                 st.dataframe(cad_b_display, use_container_width=True,hide_index=True)
@@ -825,7 +961,6 @@ if st.session_state.logged_in:
 
                             st.markdown("### 📋 Utilização do Plano (Atendimentos)")
                             if not util_b.empty:
-                                # Este reset_index(drop=True) está ok, pois util_b já é um DataFrame
                                 util_b_display = util_b.reset_index(drop=True)
                                 util_b_display.insert(0, 'ID_Registro', range(1, 1 + len(util_b_display)))
                                 # APLICAR FORMAT_BRL PARA A COLUNA 'Valor' NO DATAFRAME VISUAL
@@ -872,7 +1007,6 @@ if st.session_state.logged_in:
                                 st.markdown("### 💉 Principais Procedimentos")
                                 if 'Nome_do_Procedimento' in util_b.columns and 'Valor' in util_b.columns:
                                     top_proc_b = util_b.groupby('Nome_do_Procedimento')['Valor'].sum().sort_values(ascending=False).head(10)
-                                    # CORREÇÃO: Removemos 'drop=True'
                                     df_top_proc = top_proc_b.reset_index().rename(columns={'Nome_do_Procedimento':'Procedimento','Valor':'Valor'})
                                     df_top_proc.insert(0, 'Ranking', range(1, 1 + len(df_top_proc)))
                                     # USANDO A NOVA FUNÇÃO style_dataframe_brl
@@ -901,6 +1035,9 @@ if st.session_state.logged_in:
                                 if not util_b.empty:
                                     # remove a coluna de Mes_Ano temporária para exportação
                                     util_b_export = util_b.drop(columns=['Mes_Ano', 'Tipo_Beneficiario'], errors='ignore')
+                                    # Garantir o valor numérico para exportação
+                                    if 'Valor' in util_b_export.columns:
+                                        util_b_export['Valor'] = pd.to_numeric(util_b_export['Valor'], errors='coerce')
                                     util_b_export.to_excel(writer, sheet_name='Utilizacao_Individual', index=False)
                                 if not cad_b.empty:
                                     # Certifique-se de usar a versão original do cad_b sem a coluna ID temporária para exportação
@@ -924,22 +1061,115 @@ if st.session_state.logged_in:
                                 use_container_width=True
                             )
                     # --- FIM: Seção Detalhada ---
+                
+                # --- NOVO ABA: DETALHES INTERATIVOS (RH) ---
+                elif tab_name == "📑 Detalhes Interativos":
+                    st.markdown("### 🗂️ Dados de Utilização Interativos")
+                    st.write("Use a tabela interativa para filtrar, ordenar e selecionar registros de utilização. Exporte o resultado exato que você vê na tabela (incluindo filtros e ordenação aplicados).")
+
+                    if utilizacao_filtrada.empty:
+                        st.info("ℹ️ Nenhum dado de utilização encontrado com os filtros aplicados.")
+                    else:
+                        # Prepara o DataFrame para o AgGrid
+                        df_ag = utilizacao_filtrada.copy()
+                        df_ag.index = df_ag.index + 1 # Inicia o index em 1
+                        df_ag = df_ag.reset_index().rename(columns={'index': 'ID_Registro'})
+
+                        # Configuração do AgGrid
+                        gb = GridOptionsBuilder.from_dataframe(df_ag)
+                        
+                        # Formatação monetária e de data para AgGrid (exemplo)
+                        if 'Valor' in df_ag.columns:
+                            gb.configure_column("Valor", type=["numericColumn", "customNumericFormat"], 
+                                                valueFormatter="`'R$ ' + data.Valor.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2})`",
+                                                aggFunc='sum')
+                        if 'Data_do_Atendimento' in df_ag.columns:
+                            gb.configure_column("Data_do_Atendimento", type=["dateColumnFilter", "customDateTimeFormat"], 
+                                                custom_format_string='dd/MM/yyyy',
+                                                cellRenderer='agDateStringCellRenderer')
+
+                        gb.configure_default_column(editable=False, filter=True, sortable=True, resizable=True)
+                        gb.configure_grid_options(domLayout='normal')
+                        
+                        # Opções de exportação
+                        gb.configure_export_params(data_key="data", file_name="export_utilizacao_aggrid", 
+                                                   column_separator=";", suppress_quotes=True)
+                        
+                        # Configura a barra de status com agregações
+                        gb.configure_grid_options(
+                            enableRangeSelection=True,
+                            rowSelection='multiple',
+                            suppressRowClickSelection=True,
+                            groupSelectsChildren=True,
+                            groupSelectsFiltered=True,
+                            showOpenedGroup=True,
+                            enableCellTextSelection=True,
+                            ensureDomOrder=True
+                        )
+
+                        gridOptions = gb.build()
+
+                        # Exibe a tabela interativa
+                        grid_response = AgGrid(
+                            df_ag,
+                            gridOptions=gridOptions,
+                            data_return_mode=DataReturnMode.AS_INPUT,
+                            update_mode=GridUpdateMode.MODEL_CHANGED,
+                            fit_columns_on_grid_load=False,
+                            allow_unsafe_jscode=True, # Set it to True to allow jsfunction to be injected
+                            enable_enterprise_modules=False,
+                            height=400,
+                            width='100%',
+                            reload_data=True
+                        )
+                        
+                        # Botão de Exportação Excel (usa a funcionalidade nativa do AgGrid)
+                        st.markdown(
+                            """
+                            <script>
+                            function download_data() {
+                                const gridApi = Streamlit.getGridApi('aggrid'); 
+                                if (gridApi) {
+                                    gridApi.exportDataAsExcel();
+                                }
+                            }
+                            </script>
+                            <button onclick="download_data()" style='
+                                background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                                color: white;
+                                border: none;
+                                border-radius: 8px;
+                                padding: 0.75rem 2rem;
+                                font-weight: 600;
+                                transition: all 0.3s ease;
+                                cursor: pointer;
+                                display: block;
+                                width: 100%;
+                                margin-top: 1rem;
+                            '>📥 Baixar Dados Visualizados (Excel)</button>
+                            """,
+                            unsafe_allow_html=True
+                        )
 
 
                 # --- ABA: EXPORTAÇÃO (RH) ---
                 elif tab_name == "📤 Exportação":
                     st.markdown("### 📥 Exportar Relatório Completo")
-                    st.write("Baixe todas as abas do arquivo processado, respeitando os filtros de `Período`, `Sexo`, `Município`, `Faixa Etária` e `Tipo de Beneficiário` aplicados.")
+                    st.write("Baixe todas as abas do arquivo processado, respeitando os filtros de `Período`, `Sexo`, `Município`, `Faixa Etária`, `Tipo de Beneficiário` e `Plano` aplicados.")
                     buffer = BytesIO()
                     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                         # Para exportar, é melhor que os dados voltem ao formato numérico puro
                         # Remove a coluna temporária 'Tipo_Beneficiario' se for exportar a Utilizacao completa
                         utilizacao_filtrada_export = utilizacao_filtrada.drop(columns=['Tipo_Beneficiario'], errors='ignore')
                         
+                        # Garantir o valor numérico para exportação
+                        if 'Valor' in utilizacao_filtrada_export.columns:
+                            utilizacao_filtrada_export['Valor'] = pd.to_numeric(utilizacao_filtrada_export['Valor'], errors='coerce')
+                            
                         utilizacao_filtrada_export.to_excel(writer, sheet_name='Utilizacao_Filtrada', index=False)
                         cadastro_filtrado.to_excel(writer, sheet_name='Cadastro_Filtrado', index=False)
                         
-                        # A exportação do Medicina do Trabalho e Atestados não estava filtrada antes, vamos filtrar
+                        # A exportação do Medicina do Trabalho e Atestados é filtrada pelo Cadastro Filtrado
                         med_export = medicina_trabalho.copy()
                         if 'Nome_do_Associado' in med_export.columns and 'Nome_do_Associado' in cadastro_filtrado.columns:
                             med_export = med_export[med_export['Nome_do_Associado'].isin(cadastro_filtrado['Nome_do_Associado'])]
